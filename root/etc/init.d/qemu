@@ -1,0 +1,1190 @@
+#!/bin/sh /etc/rc.common
+# Copyright (c) 2024 OpenWrt.org
+
+START=95
+STOP=5
+
+USE_PROCD=1
+
+NAME="qemu"
+
+uci_get_by_name() {
+	local ret=$(uci get $NAME.$1.$2 2>/dev/null)
+	echo ${ret:=$3}
+}
+
+uci_get_by_type() {
+	local ret=$(uci get $NAME.@$1[0].$2 2>/dev/null)
+	echo "${ret:=$3}"
+}
+
+get_global_config() {
+	logger -t qemu "Getting global configuration"
+	storage_path=$(uci_get_by_type "global" "storage_path" "/storage/qemu")
+}
+
+validate_basic_config() {
+	local vm_ref=$1
+
+	# 如果名称不正确，报错
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	if [ -z "$name" ]; then
+		logger -t qemu "Error: VM name is required"
+		return 1
+	fi
+
+	# 如果内存过小，报错
+	local mem_size=$(uci_get_by_name "$vm_ref" "mem_size" "512")
+	# 提取纯数字部分（移除单位）
+	local mem_size_num=$(echo "$mem_size" | sed 's/[^0-9]//g')
+	if [ -z "$mem_size_num" ] || [ "$mem_size_num" -lt "64" ]; then
+		logger -t qemu "Error: Memory size must be at least 64MB"
+		return 1
+	fi
+
+	# 如果未设置UEFI启动，直接返回
+	local uefi=$(uci_get_by_name "$vm_ref" "uefi" "0")
+	if [ "$uefi" != "1" ]; then
+		return 0
+	fi
+	# 若设置UEFI启动
+	local bios=$(uci_get_by_name "$vm_ref" "bios" "")
+	# 如果自定义UEFI固件为空，则采用默认UEFI固件
+	if [ -z "$bios" ]; then
+		bios="/usr/share/OVMF/OVMF_CODE.fd"
+	fi
+	# 如果文件不存在，报错
+	if [ ! -f "$bios" ]; then
+		logger -t qemu "Error: Custom BIOS file not found: $bios"
+		return 1
+	fi
+	# 如果对应的VARS文件不存在则报错
+	local vars="${bios/CODE/VARS}"
+	if [ ! -f "$vars" ]; then
+		logger -t qemu "Error: UEFI firmware file not found: $vars"
+		return 1
+	fi
+
+	local bios_file="${storage_path}/${name}_code.fd"
+	local vars_file="${storage_path}/${name}_vars.fd"
+	# 如果UEFI固件未同步，直接同步两个文件
+	if ! cmp -s "$bios" "$bios_file"; then
+		cp -f "$bios" "$bios_file"
+		cp -f "$vars" "$vars_file"
+	fi
+	# 如果VARS文件不存在，同步VARS文件
+	if [ ! -f "$vars_file" ]; then
+		cp -f "$vars" "$vars_file"
+	fi
+
+	# 再次校验文件是否创建成功
+	if [ -f "$bios_file" ]; then
+		logger -t qemu "UEFI firmware file created successfully"
+	else
+		logger -t qemu "Error: Failed to create $bios_file"
+		return 1
+	fi
+	if [ -f "$vars_file" ]; then
+		logger -t qemu "UEFI variables file created successfully"
+	else
+		logger -t qemu "Error: Failed to create $vars_file"
+		return 1
+	fi
+}
+
+# 解析基础配置参数
+build_basic_config() {
+	local vm_ref=$1
+	
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd="-name \"$name\""
+
+	# 获取虚拟机基础配置
+	local nodefaults=$(uci_get_by_name "$vm_ref" "nodefaults" "1")
+	local snapshot=$(uci_get_by_name "$vm_ref" "snapshot" "0")
+	local machine=$(uci_get_by_name "$vm_ref" "machine" "q35")
+	local accel=$(uci_get_by_name "$vm_ref" "accel" "kvm")
+	local cpu_model=$(uci_get_by_name "$vm_ref" "cpu_model" "host")
+	local cpu_flags=$(uci_get_by_name "$vm_ref" "cpu_flags" "")
+	local smp_sockets=$(uci_get_by_name "$vm_ref" "smp_sockets" "1")
+	local smp_cores=$(uci_get_by_name "$vm_ref" "smp_cores" "1")
+	local smp_threads=$(uci_get_by_name "$vm_ref" "smp_threads" "1")
+	local mem_size=$(uci_get_by_name "$vm_ref" "mem_size" "512")
+	# 提取纯数字部分（移除单位）
+	local mem_size_num=$(echo "$mem_size" | sed 's/[^0-9]//g')
+	local mem_path=$(uci_get_by_name "$vm_ref" "mem_path" "")
+	local mem_prealloc=$(uci_get_by_name "$vm_ref" "mem_prealloc" "0")
+	local mem_merge=$(uci_get_by_name "$vm_ref" "mem_merge" "1")
+	local boot=$(uci_get_by_name "$vm_ref" "boot" "order=c")
+	local boot_menu=$(uci_get_by_name "$vm_ref" "boot_menu" "on")
+	local uefi=$(uci_get_by_name "$vm_ref" "uefi" "0")
+	local bios=$(uci_get_by_name "$vm_ref" "bios" "")
+	local rtc_base=$(uci_get_by_name "$vm_ref" "rtc_base" "localtime")
+	local rtc_clock=$(uci_get_by_name "$vm_ref" "rtc_clock" "host")
+	local rtc_driftfix=$(uci_get_by_name "$vm_ref" "rtc_driftfix" "slew")
+	
+	
+	# 机器参数
+	cmd="$cmd -machine type=$machine,accel=$accel"
+	# CPU参数
+	cmd="$cmd -cpu $cpu_model"
+	if [ -n "$cpu_flags" ]; then
+		cmd="$cmd,$cpu_flags"
+	fi
+
+	# SMP参数
+	cmd="$cmd -smp sockets=$smp_sockets,cores=$smp_cores,threads=$smp_threads"
+	
+	# 内存参数
+	cmd="$cmd -m ${mem_size_num}M"
+	if [ -n "$mem_path" ]; then
+		cmd="$cmd -mem-path \"$mem_path\""
+	fi
+	if [ "$mem_prealloc" = "1" ]; then
+		cmd="$cmd -mem-prealloc"
+	fi
+	if [ "$mem_merge" = "0" ]; then
+		cmd="$cmd -mem-merge off"
+	fi
+	
+	# 启动参数
+	local boot_args="$boot"
+	if [ "$boot_menu" = "on" ]; then
+		boot_args="${boot_args},menu=on"
+	fi
+	cmd="$cmd -boot $boot_args"
+	
+	# RTC参数
+	cmd="$cmd -rtc base=$rtc_base,clock=$rtc_clock,driftfix=$rtc_driftfix"
+
+	# UEFI参数
+	if [ "$uefi" = "1" ]; then
+		local bios_file="${storage_path}/${name}_code.fd"
+		local vars_file="${storage_path}/${name}_vars.fd"
+		cmd="$cmd -drive if=pflash,format=raw,readonly=on,file=$bios_file"
+		cmd="$cmd -drive if=pflash,format=raw,file=$vars_file"
+	fi
+
+	# 全局参数
+	if [ "$nodefaults" = "1" ]; then
+		cmd="$cmd -nodefaults"
+	fi
+
+	if [ "$snapshot" = "1" ]; then
+		cmd="$cmd -snapshot"
+	fi
+	echo "$cmd"
+}
+
+# 校验存储配置
+validate_storage_config() {
+	local vm_ref=$1
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	# 存储已使用的 id（使用普通数组）
+	local used_ids=""
+
+	# 校验存储配置
+	local devices=$(uci show qemu | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for device_ref in $devices; do
+		local device_file=$(uci_get_by_name "$device_ref" "file")
+		local device_id=$(uci_get_by_name "$device_ref" "id")
+		local device_type=$(echo "$device_ref" | awk -F= '{print $1}' | sed 's/@//')
+		logger -t qemu "Info: check device $device_type $device_id $device_file"
+		# 检查 id 是否重复
+		if [ -n "$device_id" ]; then
+			logger -t qemu "Info: check disk ID $used_ids with $device_id"
+			case "$device_type" in
+				disk*)	
+				if echo " $used_ids " | grep -q " $device_id "; then
+					logger -t qemu "Error: Duplicate disk ID: $device_id"
+					return 1
+				fi
+				used_ids="$used_ids $device_id"
+				;;
+				cdrom*)
+				if echo " $used_ids " | grep -q " $device_id "; then
+					logger -t qemu "Error: Duplicate CDROM ID: $device_id"
+					return 1
+				fi
+				used_ids="$used_ids $device_id"
+				;;
+			esac
+		fi
+		
+		if [ "$device_type" = "disk" ]; then
+			# disk 类型必须指定文件且文件必须存在
+			if [ -z "$device_file" ]; then
+				logger -t qemu "Error: Disk device requires a file path"
+				return 1
+			fi
+			if [ ! -f "$device_file" ]; then
+				logger -t qemu "Error: Disk file not found: $device_file"
+				return 1
+			fi
+		else
+			# cdrom 未指定文件则 continue
+			if [ -z "$device_file" ]; then
+				continue
+			fi
+			# cdrom 指定了文件则检查文件是否存在
+			if [ ! -f "$device_file" ]; then
+				logger -t qemu "Error: File not found: $device_file"
+				return 1
+			fi
+		fi
+		done
+	
+	return 0
+}
+
+# 解析存储配置
+build_storage_config() {
+	local vm_ref=$1
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	# 解析所有存储设备配置（disk、cdrom）
+	local devices=$(uci show qemu | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for device_ref in $devices; do
+		local device_file=$(uci_get_by_name "$device_ref" "file")
+		local device_id=$(uci_get_by_name "$device_ref" "id")
+		local device_format=$(uci_get_by_name "$device_ref" "format" "qcow2")
+		local device_iface=$(uci_get_by_name "$device_ref" "iface" "virtio-blk")
+		local device_media=$(uci_get_by_name "$device_ref" "media" "disk")
+		local device_cache=$(uci_get_by_name "$device_ref" "cache" "")
+		local device_discard=$(uci_get_by_name "$device_ref" "discard" "")
+		local device_readonly=$(uci_get_by_name "$device_ref" "readonly" "0")
+		local device_shareable=$(uci_get_by_name "$device_ref" "shareable" "0")
+		local device_removable=$(uci_get_by_name "$device_ref" "removable" "0")
+		
+		if [ -n "$device_file" ]; then
+			local drive_param="-drive file=${device_file},format=${device_format},if=${device_iface},media=${device_media}"
+			if [ -n "$device_cache" ]; then
+				drive_param="$drive_param,cache=$device_cache"
+			fi
+			if [ -n "$device_id" ]; then
+				drive_param="$drive_param,id=$device_id"
+			fi
+			if [ -n "$device_discard" ]; then
+				drive_param="$drive_param,discard=$device_discard"
+			fi
+			if [ "$device_readonly" = "1" ]; then
+				drive_param="$drive_param,readonly=on"
+			fi
+			if [ "$device_shareable" = "1" ]; then
+				drive_param="$drive_param,shareable=on"
+			fi
+			if [ "$device_removable" = "1" ]; then
+				drive_param="$drive_param,removable=on"
+			fi
+			cmd="$cmd $drive_param"
+		fi
+		done
+	
+	# 解析 storage 配置（兼容旧配置）
+	local storages=$(uci show qemu | grep -E "@storage\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for storage_ref in $storages; do
+		local type=$(uci_get_by_name "$storage_ref" "type" "")
+		local path=$(uci_get_by_name "$storage_ref" "path" "")
+		
+		if [ -n "$type" ] && [ -n "$path" ]; then
+			cmd="$cmd -drive file=$path,if=$type"
+		fi
+		done
+	
+	echo "$cmd"
+}
+
+# 校验 vsock 配置
+validate_vsock_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	local vsocks=$(uci show qemu | grep -E "@vsock_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for vsock_ref in $vsocks; do
+		local vsock_type=$(echo "$vsock_ref" | sed 's/vsock_\([a-z]*\).*/\1/')
+		if [ "$vsock_type" = "manual" ]; then
+			local guest_cid=$(uci_get_by_name "$vsock_ref" "guest_cid" "")
+			if [ -z "$guest_cid" ]; then
+				logger -t qemu "Error: Guest CID is required for manual VSOCK"
+				echo "Error: Guest CID is required for manual VSOCK" >&2
+				return 1
+			fi
+			
+			if [ "$guest_cid" -lt 3 ] || [ "$guest_cid" -gt 16777215 ]; then
+				logger -t qemu "Error: Guest CID must be between 3 and 16777215"
+				echo "Error: Guest CID must be between 3 and 16777215" >&2
+				return 1
+			fi
+		fi
+	done
+	
+	return 0
+}
+
+# 解析VSOCK配置
+build_vsock_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	local vsock_index=0
+	
+	local vsocks=$(uci show qemu | grep -E "@vsock_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for vsock_ref in $vsocks; do
+		local guest_cid=$(uci_get_by_name "$vsock_ref" "guest_cid" "3")
+		local vsock_type=$(echo "$vsock_ref" | sed 's/vsock_\([a-z]*\).*/\1/')
+		
+		if [ "$vsock_type" = "auto" ]; then
+			cmd="$cmd -device vhost-vsock-pci,id=vsock$vsock_index"
+		elif [ "$vsock_type" = "manual" ]; then
+			cmd="$cmd -device vhost-vsock-pci,id=vsock$vsock_index,guest-cid=$guest_cid"
+		fi
+		vsock_index=$((vsock_index + 1))
+	done
+	
+	echo "$cmd"
+}
+
+
+# 校验 channel 配置
+validate_channel_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	local channels=$(uci show qemu | grep -E "@channel_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for channel_ref in $channels; do
+		local path=$(uci_get_by_name "$channel_ref" "path" "")
+		local channel=$(uci_get_by_name "$channel_ref" "channel" "")
+		local channel_type=$(echo "$channel_ref" | sed 's/channel_\([a-z_]*\).*/\1/')
+		
+		if [ "$channel_type" = "file" ] || [ "$channel_type" = "unix_manual" ]; then
+			if [ -z "$path" ]; then
+				logger -t qemu "Error: Path is required for channel device type $channel_type"
+				echo "Error: Path is required for channel device type $channel_type" >&2
+				return 1
+			fi
+		elif [ "$channel_type" = "spiceport" ]; then
+			if [ -z "$channel" ]; then
+				logger -t qemu "Error: Channel is required for spiceport device type"
+				echo "Error: Channel is required for spiceport device type" >&2
+				return 1
+			fi
+		fi
+	done
+	
+	return 0
+}
+
+# 解析 channel 配置
+build_channel_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	local channel_index=0
+	
+	local channels=$(uci show qemu | grep -E "channel_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for channel_ref in $channels; do
+		local name=$(uci_get_by_name "$channel_ref" "name" "com.redhat.spice.0")
+		local path=$(uci_get_by_name "$channel_ref" "path" "")
+		local channel=$(uci_get_by_name "$channel_ref" "channel" "")
+		
+		local channel_param="-chardev"
+		local channel_type=$(echo "$channel_ref" | sed 's/^@\?channel_\([a-z_]*\).*/\1/')
+		
+		if [ "$channel_type" = "file" ]; then
+			channel_param="$channel_param file,path=\"$path\",id=channel$channel_index"
+		elif [ "$channel_type" = "pty" ]; then
+			channel_param="$channel_param pty,id=channel$channel_index"
+		elif [ "$channel_type" = "spicevmc" ]; then
+			channel_param="$channel_param spicevmc,id=channel$channel_index,name=\"$name\""
+		elif [ "$channel_type" = "spiceport" ]; then
+			channel_param="$channel_param spiceport,id=channel$channel_index,channel=\"$channel\""
+		elif [ "$channel_type" = "unix_auto" ]; then
+			local socket_path="/var/run/qemu-${vm_name}-channel${channel_index}.sock"
+			channel_param="$channel_param unix,path=\"$socket_path\",server,nowait,id=channel$channel_index"
+		elif [ "$channel_type" = "unix_manual" ]; then
+			channel_param="$channel_param unix,path=\"$path\",server,nowait,id=channel$channel_index"
+		fi
+		
+		cmd="$cmd $channel_param -device virtserialport,chardev=channel$channel_index,name=\"$name\""
+		channel_index=$((channel_index + 1))
+	done
+	
+	echo "$cmd"
+}
+
+# 校验 controller 配置
+validate_controller_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	local controllers=$(uci show qemu | grep -E "@controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for controller_ref in $controllers; do
+		local type=$(uci_get_by_name "$controller_ref" "type" "")
+		if [ -z "$type" ]; then
+			logger -t qemu "Error: Controller type is required"
+			echo "Error: Controller type is required" >&2
+			return 1
+		fi
+		done
+	
+	return 0
+}
+
+# 解析 controller 配置
+build_controller_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	local controller_index=0
+	
+	local controllers=$(uci show qemu | grep -E "controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for controller_ref in $controllers; do
+		local type=$(uci_get_by_name "$controller_ref" "type" "")
+		if [ -n "$type" ]; then
+			local controller_type=$(echo "$controller_ref" | sed 's/^@\?controller_\([a-z]*\).*/\1/')
+			cmd="$cmd -device $type,id=${controller_type}${controller_index}"
+			controller_index=$((controller_index + 1))
+		fi
+		done
+	
+	echo "$cmd"
+}
+
+
+
+# 校验 host_dev 配置
+validate_host_dev_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	local usb_hosts=$(uci show qemu | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $usb_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		if [ -z "$host" ]; then
+			logger -t qemu "Error: USB host device is required"
+			echo "Error: USB host device is required" >&2
+			return 1
+		fi
+		done
+	
+	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $pci_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		if [ -z "$host" ]; then
+			logger -t qemu "Error: PCI host device is required"
+			echo "Error: PCI host device is required" >&2
+			return 1
+		fi
+		done
+	
+	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+for host_ref in $mdev_hosts; do
+	local host=$(uci_get_by_name "$host_ref" "host" "")
+	if [ -z "$host" ]; then
+		logger -t qemu "Error: MDEV host device is required"
+		echo "Error: MDEV host device is required" >&2
+		return 1
+	fi
+	done
+
+# TPM Host Devices
+local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+for host_ref in $tpm_hosts; do
+	local device_path=$(uci_get_by_name "$host_ref" "device_path" "")
+	if [ -z "$device_path" ]; then
+		logger -t qemu "Error: TPM device path is required"
+		echo "Error: TPM device path is required" >&2
+		return 1
+	fi
+	
+	if [ ! -c "$device_path" ]; then
+		logger -t qemu "Error: TPM device not found: $device_path"
+		echo "Error: TPM device not found: $device_path" >&2
+		return 1
+	fi
+	done
+
+return 0
+}
+
+# 解析 host_dev 配置
+build_host_dev_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	# USB Host Devices
+	local usb_index=0
+	local usb_hosts=$(uci show qemu | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $usb_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		if [ -n "$host" ]; then
+			local bus=$(echo "$host" | cut -d'-' -f1)
+			local dev=$(echo "$host" | cut -d'-' -f2)
+			cmd="$cmd -usb -device usb-host,hostbus=$bus,hostaddr=$dev,id=usbhost$usb_index"
+		fi
+		usb_index=$((usb_index + 1))
+	done
+	
+	# PCI Host Devices
+	local pci_index=0
+	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $pci_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		if [ -n "$host" ]; then
+			cmd="$cmd -device vfio-pci,host=$host,id=pcipassthrough$pci_index"
+		fi
+		pci_index=$((pci_index + 1))
+	done
+	
+	# MDEV Host Devices
+	local mdev_index=0
+	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $mdev_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		local mdev_type=$(uci_get_by_name "$host_ref" "mdev_type" "")
+		if [ -n "$host" ]; then
+			cmd="$cmd -device vfio-pci,sysfsdev=/sys/bus/pci/devices/$host,id=mdev$mdev_index"
+		fi
+		mdev_index=$((mdev_index + 1))
+	done
+	
+	# RNG Host Devices
+	local rng_index=0
+	local rng_hosts=$(uci show qemu | grep -E "host_dev_rng" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $rng_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "/dev/urandom")
+		if [ -n "$host" ]; then
+			cmd="$cmd -object rng-random,id=rng$rng_index,filename=$host -device virtio-rng-pci,rng=rng$rng_index,id=rngdev$rng_index"
+		fi
+		rng_index=$((rng_index + 1))
+	done
+
+	# TPM Host Devices
+	local tpm_index=0
+	local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $tpm_hosts; do
+		local model=$(uci_get_by_name "$host_ref" "model" "crb")
+		local device_path=$(uci_get_by_name "$host_ref" "device_path" "")
+		if [ -n "$device_path" ]; then
+			cmd="$cmd -tpmdev passthrough,id=tpm$tpm_index,path=$device_path"
+			cmd="$cmd -device tpm-$model,tpmdev=tpm$tpm_index"
+		fi
+		tpm_index=$((tpm_index + 1))
+	done
+
+	echo "$cmd"
+}
+
+# 校验 interface 配置
+validate_interface_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	local interfaces=$(uci show qemu | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for interface_ref in $interfaces; do
+		local path=$(uci_get_by_name "$interface_ref" "path" "")
+		local interface_type=$(echo "$interface_ref" | sed 's/.*interface_//' | sed 's/\[.*\]//')
+		
+		if [ "$interface_type" = "file" ] || [ "$interface_type" = "unix" ]; then
+			if [ -z "$path" ]; then
+				logger -t qemu "Error: Path is required for interface type $interface_type"
+				echo "Error: Path is required for interface type $interface_type" >&2
+				return 1
+			fi
+		fi
+	done
+	
+	return 0
+}
+
+# 解析 interface 配置
+build_interface_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	local serial_index=0
+	local parallel_index=0
+	
+	local interfaces=$(uci show qemu | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for interface_ref in $interfaces; do
+		local path=$(uci_get_by_name "$interface_ref" "path" "")
+		local iface_type=$(uci_get_by_name "$interface_ref" "type" "serial")
+		local interface_subtype=$(echo "$interface_ref" | sed 's/.*interface_//' | sed 's/\[.*\]//')
+		
+		if [ "$iface_type" = "serial" ]; then
+			if [ "$interface_subtype" = "file" ]; then
+				cmd="$cmd -serial file:\"$path\""
+			elif [ "$interface_subtype" = "pty" ]; then
+				cmd="$cmd -serial pty"
+			elif [ "$interface_subtype" = "unix" ]; then
+				cmd="$cmd -serial unix:\"$path\",server,nowait"
+			fi
+			serial_index=$((serial_index + 1))
+		elif [ "$iface_type" = "parallel" ]; then
+			if [ "$interface_subtype" = "file" ]; then
+				cmd="$cmd -parallel file:\"$path\""
+			elif [ "$interface_subtype" = "pty" ]; then
+				cmd="$cmd -parallel pty"
+			elif [ "$interface_subtype" = "unix" ]; then
+				cmd="$cmd -parallel unix:\"$path\",server,nowait"
+			fi
+			parallel_index=$((parallel_index + 1))
+		fi
+	done
+	
+	echo "$cmd"
+}
+
+# 解析 watchdog 配置
+build_watchdog_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local watchdogs=$(uci show qemu | grep -E "@watchdog\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for watchdog_ref in $watchdogs; do
+		local device=$(uci_get_by_name "$watchdog_ref" "device" "i6300esb")
+		cmd="$cmd -device $device"
+	done
+	
+	echo "$cmd"
+}
+
+# 解析 sound 配置
+build_sound_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local sounds=$(uci show qemu | grep -E "@sound\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	if [ -n "$sounds" ]; then
+		# 添加 audiodev 后端（空驱动，服务器无音频也不报错）
+		cmd="$cmd -audiodev id=audio0,driver=none"
+		
+		for sound_ref in $sounds; do
+			local device=$(uci_get_by_name "$sound_ref" "device" "ac97")
+			
+			if [ "$device" = "ac97" ]; then
+				# 修复: 绑定 audiodev
+				cmd="$cmd -device ac97,audiodev=audio0"
+			elif [ "$device" = "hdaich6" ]; then
+				# 修复: 绑定 audiodev
+				cmd="$cmd -device intel-hda -device hda-duplex,audiodev=audio0"
+			elif [ "$device" = "hdaich9" ]; then
+				# 修复: 绑定 audiodev
+				cmd="$cmd -device intel-hda,id=hda -device hda-duplex,id=sound0,bus=hda.0,cad=0,audiodev=audio0"
+			fi
+		done
+	fi
+	
+	echo "$cmd"
+}
+
+# 解析网络配置
+build_network_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	local net_index=0
+	
+	local nets=$(uci show qemu | grep -E "@net_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for net_ref in $nets; do
+		local net_type=$(uci_get_by_name "$net_ref" "type" "bridge")
+		local net_model=$(uci_get_by_name "$net_ref" "model" "virtio-net-pci")
+		local net_mac=$(uci_get_by_name "$net_ref" "mac" "")
+		
+		
+		local device_param="-device $net_model,netdev=net$net_index"
+		if [ -n "$net_mac" ]; then
+			device_param="$device_param,mac=$net_mac"
+		fi
+
+		local netdev_param=""
+		case "$net_type" in
+			bridge)
+				local net_bridge=$(uci_get_by_name "$net_ref" "bridge" "br-lan")
+				local net_helper=$(uci_get_by_name "$net_ref" "helper" "/usr/lib/qemu-bridge-helper")
+				
+				netdev_param="-netdev bridge,br=$net_bridge,id=net$net_index"
+		if [ -n "$net_helper" ] && [ "$net_helper" != "/usr/lib/qemu-bridge-helper" ]; then
+			netdev_param="$netdev_param,helper=$net_helper"
+		fi
+				;;
+			user)
+				local net_hostfwd=$(uci_get_by_name "$net_ref" "hostfwd" "")
+				local net_net=$(uci_get_by_name "$net_ref" "net" "10.0.2.0/24")
+				local net_dhcpstart=$(uci_get_by_name "$net_ref" "dhcpstart" "10.0.2.15")
+				local net_dns=$(uci_get_by_name "$net_ref" "dns" "10.0.2.3")
+				
+				netdev_param="-netdev user,id=net$net_index"
+		if [ -n "$net_hostfwd" ]; then
+			netdev_param="$netdev_param,hostfwd=$net_hostfwd"
+		fi
+			if [ -n "$net_net" ] && [ "$net_net" != "10.0.2.0/24" ]; then
+				netdev_param="$netdev_param,net=$net_net"
+			fi
+			if [ -n "$net_dhcpstart" ] && [ "$net_dhcpstart" != "10.0.2.15" ]; then
+				netdev_param="$netdev_param,dhcpstart=$net_dhcpstart"
+			fi
+			if [ -n "$net_dns" ] && [ "$net_dns" != "10.0.2.3" ]; then
+				netdev_param="$netdev_param,dns=$net_dns"
+			fi
+				;;
+			tap)
+				local net_ifname=$(uci_get_by_name "$net_ref" "ifname" "tap0")
+				local net_script=$(uci_get_by_name "$net_ref" "script" "/etc/qemu-ifup")
+				local net_downscript=$(uci_get_by_name "$net_ref" "downscript" "/etc/qemu-ifdown")
+				local net_sndbuf=$(uci_get_by_name "$net_ref" "sndbuf" "0")
+				local net_poll_us=$(uci_get_by_name "$net_ref" "poll_us" "0")
+				
+				netdev_param="-netdev tap,id=net$net_index"
+		if [ -n "$net_ifname" ]; then
+			netdev_param="$netdev_param,ifname=$net_ifname"
+		fi
+		if [ -n "$net_script" ] && [ "$net_script" != "/etc/qemu-ifup" ]; then
+			netdev_param="$netdev_param,script=$net_script"
+		fi
+		if [ -n "$net_downscript" ] && [ "$net_downscript" != "/etc/qemu-ifdown" ]; then
+			netdev_param="$netdev_param,downscript=$net_downscript"
+		fi
+				if [ -n "$net_sndbuf" ] && [ "$net_sndbuf" != "0" ]; then
+					netdev_param="$netdev_param,sndbuf=$net_sndbuf"
+				fi
+				if [ -n "$net_poll_us" ] && [ "$net_poll_us" != "0" ]; then
+					netdev_param="$netdev_param,poll_us=$net_poll_us"
+				fi
+				;;
+			passt)
+				local net_path=$(uci_get_by_name "$net_ref" "path" "")
+				local net_interface=$(uci_get_by_name "$net_ref" "interface" "")
+				
+				netdev_param="-netdev passt,id=net$net_index"
+		if [ -n "$net_path" ]; then
+			netdev_param="$netdev_param,path=$net_path"
+		fi
+		if [ -n "$net_interface" ]; then
+			netdev_param="$netdev_param,interface=$net_interface"
+		fi
+				;;
+			l2tpv3)
+				local net_src=$(uci_get_by_name "$net_ref" "src" "")
+				local net_dst=$(uci_get_by_name "$net_ref" "dst" "")
+				local net_srcport=$(uci_get_by_name "$net_ref" "srcport" "")
+				local net_dstport=$(uci_get_by_name "$net_ref" "dstport" "")
+				local net_txsession=$(uci_get_by_name "$net_ref" "txsession" "")
+				
+				if [ -n "$net_src" ] && [ -n "$net_dst" ]; then
+					netdev_param="-netdev l2tpv3,id=net$net_index,src=$net_src,dst=$net_dst"
+					if [ -n "$net_srcport" ]; then
+						netdev_param="$netdev_param,srcport=$net_srcport"
+					fi
+					if [ -n "$net_dstport" ]; then
+						netdev_param="$netdev_param,dstport=$net_dstport"
+					fi
+					if [ -n "$net_txsession" ]; then
+						netdev_param="$netdev_param,txsession=$net_txsession"
+					fi
+				fi
+				;;
+			socket)
+				local net_connect=$(uci_get_by_name "$net_ref" "connect" "")
+				local net_listen=$(uci_get_by_name "$net_ref" "listen" "")
+				
+				netdev_param="-netdev socket,id=net$net_index"
+				if [ -n "$net_listen" ]; then
+					netdev_param="$netdev_param,listen=$net_listen"
+				elif [ -n "$net_connect" ]; then
+					netdev_param="$netdev_param,connect=$net_connect"
+				fi
+				;;
+			*)
+				netdev_param="-netdev bridge,br=br-lan,id=net$net_index"
+				;;
+		esac
+		
+		if [ -n "$netdev_param" ]; then
+			cmd="$cmd $netdev_param $device_param"
+			net_index=$((net_index + 1))
+		fi
+	done
+	
+	echo "$cmd"
+}
+
+# 解析显示配置
+build_display_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local displays=$(uci show qemu | grep -E "@display\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for display_ref in $displays; do
+		local display_type=$(uci_get_by_name "$display_ref" "type" "none")
+		local display_address=$(uci_get_by_name "$display_ref" "address" "0.0.0.0")
+		local display_port=$(uci_get_by_name "$display_ref" "port" "5900")
+		local display_port_mannual=$(uci_get_by_name "$display_ref" "port_mannual" "0")
+		local display_password=$(uci_get_by_name "$display_ref" "password" "")
+		local display_password_enabled=$(uci_get_by_name "$display_ref" "password_enabled" "0")
+		local display_address_enabled=$(uci_get_by_name "$display_ref" "address_enabled" "1")
+				
+		if [ "$display_type" = "none" ]; then
+			cmd="$cmd -display none"
+		elif [ "$display_type" = "vnc" ]; then
+			local display_param="-vnc "
+			if [ "$display_address_enabled" = "1" ]; then
+				display_param="$display_param$display_address:"
+			else
+				display_param="$display_param127.0.0.1:"
+			fi
+			if [ "$display_port_mannual" = "1" ]; then
+				# Convert full port (e.g. 5901) to VNC port offset (e.g. 1)
+				local vnc_port_offset=$((display_port - 5900))
+				display_param="${display_param}${vnc_port_offset}"
+			else
+				display_param="${display_param}0"
+			fi
+			if [ "$display_password_enabled" = "1" ] && [ -n "$display_password" ]; then
+				display_param="$display_param,password"
+			fi
+			cmd="$cmd $display_param"
+		fi
+	done
+	
+	echo "$cmd"
+}
+
+# 解析显卡配置
+build_video_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local videos=$(uci show qemu | grep -E "@video\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for video_ref in $videos; do
+		local video_type=$(uci_get_by_name "$video_ref" "type" "vga")
+		
+		case "$video_type" in
+			bochs)
+				cmd="$cmd -device bochs-display"
+				;;
+			ramfb)
+				cmd="$cmd -device ramfb"
+				;;
+			vga|*)
+				cmd="$cmd -vga std"
+				;;
+		esac
+	done
+	
+	echo "$cmd"
+}
+
+# 解析输入设备配置
+build_input_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local inputs=$(uci show qemu | grep -E "@input\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for input_ref in $inputs; do
+		local input_type=$(uci_get_by_name "$input_ref" "type")
+		if [ -n "$input_type" ]; then
+			cmd="$cmd -device $input_type"
+		fi
+	done
+	
+	echo "$cmd"
+}
+
+# 解析额外参数
+build_extra_config() {
+	local vm_ref=$1
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local cmd=""
+	
+	local extras=$(uci show qemu | grep -E "@extra\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for extra_ref in $extras; do
+		local extra_args=$(uci_get_by_name "$extra_ref" "args" "")
+		# 过滤危险字符，防止命令注入
+		extra_args=$(echo "$extra_args" | sed 's/[;&|`$<>()]//g')
+		if [ -n "$extra_args" ]; then
+			cmd="$cmd $extra_args"
+		fi
+	 done
+	
+	echo "$cmd"
+}
+
+# 构建QEMU命令
+build_qemu_command() {
+	local vm_ref=$1
+
+	logger -t qemu "Building QEMU command for VM: $vm_ref"
+
+	# 构建基本命令
+	local cmd="qemu-system-x86_64"
+
+	# 依次调用各解析函数
+	cmd="$cmd $(build_basic_config "$vm_ref")"
+	cmd="$cmd $(build_controller_config "$vm_ref")"
+	cmd="$cmd $(build_storage_config "$vm_ref")"
+	cmd="$cmd $(build_display_config "$vm_ref")"
+	cmd="$cmd $(build_video_config "$vm_ref")"
+	cmd="$cmd $(build_network_config "$vm_ref")"
+	cmd="$cmd $(build_input_config "$vm_ref")"
+	cmd="$cmd $(build_vsock_config "$vm_ref")"
+	cmd="$cmd $(build_channel_config "$vm_ref")"
+	cmd="$cmd $(build_host_dev_config "$vm_ref")"
+	cmd="$cmd $(build_interface_config "$vm_ref")"
+	cmd="$cmd $(build_sound_config "$vm_ref")"
+	cmd="$cmd $(build_watchdog_config "$vm_ref")"
+	cmd="$cmd $(build_extra_config "$vm_ref")"
+
+	echo "$cmd"
+}
+
+# 准备QEMU命令（包含配置校验）
+prepare_qemu_command() {
+	local vm_ref=$1
+	
+	logger -t qemu "Preparing QEMU command for VM: $vm_ref"
+
+	# 校验basic配置（包含 machines 和 uefi 配置）
+	if ! validate_basic_config "$vm_ref"; then
+		return 1
+	fi
+	# 校验controller配置
+	if ! validate_controller_config "$vm_ref"; then
+		return 1
+	fi
+	# 校验存储配置
+	if ! validate_storage_config "$vm_ref"; then
+		return 1
+	fi
+	
+	# 校验channel配置
+	if ! validate_channel_config "$vm_ref"; then
+		return 1
+	fi
+	
+	# # 校验host配置
+	if ! validate_host_dev_config "$vm_ref"; then
+		return 1
+	fi
+
+	# 校验vsock配置
+	if ! validate_vsock_config "$vm_ref"; then
+		return 1
+	fi
+	
+	# 校验interface配置
+	if ! validate_interface_config "$vm_ref"; then
+		return 1
+	fi
+	
+	# 构建QEMU命令
+	return 0
+}
+
+start_vm() {
+	local vm_ref=$1
+	logger -t qemu "Starting VM reference: $vm_ref"
+
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	# 检查虚拟机是否已经在运行
+	logger -t qemu "Checking if VM $name is already running"
+	pid=$(ps | grep -E "qemu-system" | grep -v grep | grep -E '[[:space:]]-name[[:space:]]+"?'"${name}"'"?([[:space:]]|$)' | awk '{print $1}')
+	
+	if [ -n "$pid" ]; then
+		logger -t qemu "VM $name is already running (PID: $pid), skipping start"
+		return 0
+	fi
+	
+	# 清理旧的pid和qmp文件
+	local pidfile="/var/run/qemu-${name}.pid"
+	local qmpfile="/var/run/qemu-${name}-qmp.sock"
+	
+	if [ -f "$pidfile" ]; then
+		rm -f "$pidfile"
+		logger -t qemu "Removed old pid file: $pidfile"
+	fi
+	
+	if [ -S "$qmpfile" ]; then
+		rm -f "$qmpfile"
+		logger -t qemu "Removed old QMP socket file: $qmpfile"
+	fi
+
+	if ! prepare_qemu_command "$vm_ref"; then
+		logger -t qemu "Error: Failed to Start VM $name"
+		return 1
+	fi
+	local qemu_cmd=$(build_qemu_command "$vm_ref")
+	local qmpfile="/var/run/qemu-${name}-qmp.sock"
+	rm -f "$qmpfile"
+	qemu_cmd="$qemu_cmd -qmp unix:$qmpfile,server,nowait"
+	logger -t qemu "Full command: $qemu_cmd"
+	
+	local pidfile="/var/run/qemu-${name}.pid"
+	logger -t qemu "Opening procd instance for VM $name"
+	procd_open_instance "${name}"
+
+	logger -t qemu "Setting procd parameters for VM $name"
+	procd_set_param command $qemu_cmd
+	procd_set_param stdout 0
+	procd_set_param stderr 1
+	procd_set_param user root
+	procd_set_param pidfile "$pidfile"
+	procd_set_param term_timeout 60
+
+	logger -t qemu "Closing procd instance for VM $name"
+	procd_close_instance
+
+	logger -t qemu "VM $name started successfully"
+}
+
+stop_vm() {
+	local vm_ref=$1
+	
+	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	
+	logger -t qemu "Stopping VM: $name (ref: $vm_ref)"
+	
+	# 检查虚拟机是否正在运行
+	logger -t qemu "Checking if VM $name is running"
+	pid=$(ps | grep -E "qemu-system" | grep -v grep | grep -E '[[:space:]]-name[[:space:]]+"?'"${name}"'"?([[:space:]]|$)' | awk '{print $1}')
+
+	if [ -z "$pid" ]; then
+		logger -t qemu "VM $name is not running, nothing to do"
+		return
+	fi
+	
+	logger -t qemu "VM $name is running (PID: $pid)"
+	
+	# 尝试通过QMP优雅关闭
+	local qmp_socket="/var/run/qemu-${name}-qmp.sock"
+	
+	if [ -S "$qmp_socket" ]; then
+		logger -t qemu "Found QMP socket for VM $name, trying graceful shutdown"
+		echo -e '{"execute": "qmp_capabilities"}\n{"execute": "system_powerdown"}' | socat - unix-connect:$qmp_socket >/dev/null 2>&1
+		logger -t qemu "Sent system_powerdown command to VM $name, waiting 5 seconds"
+		
+		sleep 5
+		
+		pid=$(ps | grep -E "qemu-system" | grep -v grep | grep -E '[[:space:]]-name[[:space:]]+"?'"${name}"'"?([[:space:]]|$)' | awk '{print $1}')
+		if [ -z "$pid" ]; then
+			logger -t qemu "VM $name gracefully shut down"
+			logger -t qemu "VM $name stopped successfully"
+			return
+		fi
+		
+		logger -t qemu "VM $name still running after graceful shutdown attempt"
+	else
+		logger -t qemu "No QMP socket found for VM $name"
+	fi
+	
+	# 强制关闭
+	logger -t qemu "Forcing VM $name to stop (PID: $pid)"
+	kill -9 $pid
+	
+	sleep 1
+	pid=$(ps | grep -E "qemu-system" | grep -v grep | grep -E '[[:space:]]-name[[:space:]]+"?'"${name}"'"?([[:space:]]|$)' | awk '{print $1}')
+	if [ -z "$pid" ]; then
+		logger -t qemu "VM $name process killed successfully"
+	else
+		logger -t qemu "Failed to kill VM $name process"
+	fi
+
+	# 清理pid和qmp文件
+	local pidfile="/var/run/qemu-${name}.pid"
+	local qmpfile="/var/run/qemu-${name}-qmp.sock"
+	
+	if [ -f "$pidfile" ]; then
+		rm -f "$pidfile"
+		logger -t qemu "Removed pid file: $pidfile"
+	fi
+	
+	if [ -S "$qmpfile" ]; then
+		rm -f "$qmpfile"
+		logger -t qemu "Removed QMP socket file: $qmpfile"
+	fi
+
+	logger -t qemu "VM $name stopped successfully"
+}
+
+start_all_autostart_vm() {
+	logger -t qemu "Starting all VMs configured for autostart"
+	
+	local vm_names=$(uci show qemu | grep -E "@vm\[.*=vm" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	if [ -z "$vm_names" ]; then
+		logger -t qemu "No VMs found in configuration"
+		return
+	fi
+
+	logger -t qemu "Found VMs: $vm_names"
+	for vm_name in $vm_names; do
+		local autostart=$(uci_get_by_name "$vm_name" "autostart" "0")
+		if [ "$autostart" = "1" ]; then
+			local name=$(uci_get_by_name "$vm_name" "name" "$vm_name")
+			logger -t qemu "VM $name is configured for autostart, starting it"
+			start_vm "$vm_name"
+		else
+			local name=$(uci_get_by_name "$vm_name" "name" "$vm_name")
+			logger -t qemu "VM $name not configured for autostart, skipping"
+		fi
+	done
+	logger -t qemu "QEMU service startup completed"
+}
+
+stop_all_running_vm() {
+	logger -t qemu "Stopping all VMs"
+	
+	local vm_names=$(uci show qemu | grep -E "@vm\[.*=vm" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	if [ -z "$vm_names" ]; then
+		logger -t qemu "No VMs found in configuration"
+		return
+	fi
+
+	logger -t qemu "Found VMs to stop: $vm_names"
+	for vm_name in $vm_names; do
+		stop_vm "$vm_name"
+	done
+	
+	logger -t qemu "QEMU service stop completed"
+}
+
+start_service() {
+	logger -t qemu "Starting QEMU service"
+	get_global_config
+
+	# 创建默认存储目录
+	if [ ! -d "$storage_path" ]; then
+		logger -t qemu "Creating default storage directory: $storage_path"
+		mkdir -p "$storage_path"
+		if [ $? -ne 0 ]; then
+			logger -t qemu "Error: Failed to create storage directory: $storage_path"
+			return 1
+		fi
+	fi
+
+	if [ "$1" != "" ]; then
+		logger -t qemu "Starting specific VM: $1"
+		start_vm "$1"
+		return
+	fi
+	start_all_autostart_vm
+}
+
+stop_service() {
+	logger -t qemu "Stopping QEMU service"
+
+	if [ "$1" != "" ]; then
+		logger -t qemu "Stopping specific VM: $1"
+		stop_vm "$1"
+		return
+	fi
+	stop_all_running_vm
+}

@@ -1,0 +1,398 @@
+<%+header%>
+
+<%
+local uci = require "luci.model.uci".cursor()
+-- step变量从控制器传递过来
+local step = step or 1
+local vm_name = luci.http.formvalue("name") or ""
+local vm_desc = luci.http.formvalue("description") or ""
+local vm_autostart = luci.http.formvalue("autostart") or "0"
+local vm_cpus = luci.http.formvalue("cpus") or "1"
+local vm_memory = luci.http.formvalue("memory") or "512"
+local vm_disk_size = luci.http.formvalue("disk_size") or "10"
+local vm_bridge = luci.http.formvalue("bridge") or "br-lan"
+local vm_boot_type = luci.http.formvalue("boot_type") or "legacy"
+local vm_display = luci.http.formvalue("display") or "none"
+local vm_vnc_port = luci.http.formvalue("vnc_port") or "5900"
+
+-- 获取默认存储路径
+local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
+
+-- 生成默认磁盘路径
+local vm_disk_path = luci.http.formvalue("disk_path") or ""
+if vm_disk_path == "" and vm_name ~= "" then
+    vm_disk_path = storage_path .. "/" .. vm_name .. ".qcow2"
+end
+
+-- 固定使用 qcow2 格式
+local vm_disk_format = "qcow2"
+%>
+
+<script>
+function validateForm() {
+    var form = document.getElementById('vm-wizard-form');
+    // 只验证当前可见字段
+    var visibleInputs = form.querySelectorAll('fieldset.cbi-section input[required], fieldset.cbi-section select[required]');
+    
+    console.log('Visible inputs:', visibleInputs.length);
+    
+    for (var i = 0; i < visibleInputs.length; i++) {
+        console.log('Input:', visibleInputs[i].name, 'Value:', visibleInputs[i].value);
+        if (!visibleInputs[i].value) {
+            alert('<%:Please fill in the required field%>: ' + visibleInputs[i].name);
+            return false;
+        }
+    }
+    
+    // 验证磁盘路径
+    var diskPathInput = document.getElementById('disk_path');
+    if (diskPathInput) {
+        // 检查元素是否可见（不依赖 offsetParent）
+        var style = window.getComputedStyle(diskPathInput);
+        var isVisible = style.display !== 'none' && style.visibility !== 'hidden';
+        
+        if (isVisible) {
+            var diskPath = diskPathInput.value;
+            var expectedExtension = '.qcow2';
+            if (!diskPath.endsWith(expectedExtension)) {
+                alert('<%:The disk file path must end with%> ' + expectedExtension + ' <%:extension%>');
+                return false;
+            }
+        }
+    }
+    
+    console.log('Validation passed');
+    return true;
+}
+</script>
+
+<div class="cbi-map">
+    <h2><%:Create Virtual Machine Wizard%></h2>
+    
+    <div class="cbi-map-descr">
+        <%:Follow these steps to create a new virtual machine.%>
+        <br /><%:Fill in the configuration information step by step and click "Create VM" at the end.%>
+    </div>
+    
+    <% if luci.http.formvalue("error") == "disk_exists" then %>
+    <div class="error-box">
+        <strong><%:Warning%>:</strong> <%:The disk file already exists. Please choose a different path.%>
+    </div>
+    <% end %>
+    
+    <div class="wizard-steps">
+        <ol>
+            <li class="<%= step >= 1 and 'active' or '' %>"><%:1. Basic Information%></li>
+            <li class="<%= step >= 2 and 'active' or '' %>"><%:2. Hardware Configuration%></li>
+            <li class="<%= step >= 3 and 'active' or '' %>"><%:3. Storage Configuration%></li>
+            <li class="<%= step >= 4 and 'active' or '' %>"><%:4. Display Configuration%></li>
+            <li class="<%= step == 5 and 'active' or '' %>"><%:5. Confirmation%></li>
+        </ol>
+    </div>
+    
+    <form id="vm-wizard-form" action="<%=luci.dispatcher.build_url('admin', 'services', 'qemu', 'wizard')%>" method="post" onsubmit="return validateForm();">
+        <input type="hidden" name="step" value="<%=step%>">
+        
+        <% if step >= 2 then %>
+        <input type="hidden" name="name" value="<%=vm_name%>">
+        <input type="hidden" name="description" value="<%=vm_desc%>">
+        <input type="hidden" name="autostart" value="<%=vm_autostart%>">
+        <% end %>
+        
+        <% if step >= 3 then %>
+        <input type="hidden" name="cpus" value="<%=vm_cpus%>">
+        <input type="hidden" name="memory" value="<%=vm_memory%>">
+        <input type="hidden" name="boot_type" value="<%=vm_boot_type%>">
+        <% end %>
+        
+        <% if step >= 4 then %>
+        <input type="hidden" name="disk_size" value="<%=vm_disk_size%>">
+        <input type="hidden" name="disk_path" value="<%=vm_disk_path%>">
+        <input type="hidden" name="cdrom_image" value="<%=luci.http.formvalue('cdrom_image') or ''%>">
+        <% end %>
+        
+        
+        
+        <% if step == 5 then %>
+        <input type="hidden" name="display" value="<%=vm_display%>">
+        <input type="hidden" name="vnc_port" value="<%=vm_vnc_port%>">
+        <input type="hidden" name="vnc_port_mannual" value="<%=luci.http.formvalue('vnc_port_mannual') or '0'%>">
+        <% end %>
+        
+        <% if step == 1 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Basic Information%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="name"><%:VM Name%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="name" name="name" value="<%=vm_name%>" required>
+                        <div class="cbi-value-description"><%:Enter a unique name for the virtual machine.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="description"><%:Description%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="description" name="description" value="<%=vm_desc%>">
+                        <div class="cbi-value-description"><%:Optional description for the virtual machine.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="autostart"><%:Auto Start%></label>
+                    <div class="cbi-value-field">
+                        <input type="checkbox" id="autostart" name="autostart" value="1" <%=vm_autostart == "1" and 'checked' or ''%>>
+                        <div class="cbi-value-description"><%:Automatically start this virtual machine when the service starts.%></div>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        <% if step == 2 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Hardware Configuration%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="cpus"><%:CPUs%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="cpus" name="cpus" value="<%=vm_cpus%>" min="1" max="32" required>
+                        <div class="cbi-value-description"><%:Number of virtual CPUs for the virtual machine.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="memory"><%:Memory (MB)%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="memory" name="memory" value="<%=vm_memory%>" min="128" max="32768" required>
+                        <div class="cbi-value-description"><%:Amount of memory (RAM) allocated to the virtual machine.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="boot_type"><%:Boot Type%></label>
+                    <div class="cbi-value-field">
+                        <select id="boot_type" name="boot_type">
+                            <option value="legacy" <%=vm_boot_type == "legacy" and 'selected' or ''%>><%:Legacy BIOS%></option>
+                            <option value="uefi" <%=vm_boot_type == "uefi" and 'selected' or ''%>><%:UEFI%></option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the boot firmware type. UEFI is recommended for modern operating systems.%></div>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        <% if step == 3 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Storage Configuration%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="disk_size"><%:Disk Size (GB)%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="disk_size" name="disk_size" value="<%=vm_disk_size%>" min="1" max="1024" required>
+                        <div class="cbi-value-description"><%:Size of the virtual disk to be created.%></div>
+                    </div>
+                </div>
+                
+
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="disk_path"><%:Disk File Path%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="disk_path" name="disk_path" value="<%=vm_disk_path%>" required>
+                        <div class="cbi-value-description"><%:Path to the virtual disk file.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="cdrom_image"><%:ISO Image Path%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="cdrom_image" name="cdrom_image" value="<%=luci.http.formvalue('cdrom_image') or ''%>">
+                        <div class="cbi-value-description"><%:Optional path to an ISO image for CD-ROM.%></div>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        
+        
+        <% if step == 4 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Display Configuration%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="display"><%:Display Type%></label>
+                    <div class="cbi-value-field">
+                        <select id="display" name="display" onchange="toggleVNCPort()">
+                            <option value="none" <%=vm_display == "none" and 'selected' or ''%>><%:None (Headless)%></option>
+                            <option value="vnc" <%=vm_display == "vnc" and 'selected' or ''%>><%:VNC%></option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the display method for the virtual machine.%></div>
+                    </div>
+                </div>
+                
+                <div id="vnc_config_div" style="display: <%=vm_display == "vnc" and 'block' or 'none' %>">
+                    <div class="cbi-value">
+                        <label class="cbi-value-title" for="vnc_port_mannual"><%:Manual Port%></label>
+                        <div class="cbi-value-field">
+                            <input type="checkbox" id="vnc_port_mannual" name="vnc_port_mannual" value="1" onchange="toggleVNCPortInput()" <%=luci.http.formvalue('vnc_port_mannual') == "1" and 'checked' or ''%>>
+                            <div class="cbi-value-description"><%:Check to specify a manual port, uncheck for auto port allocation.%></div>
+                        </div>
+                    </div>
+                    
+                    <div id="vnc_port_div" style="display: <%=luci.http.formvalue('vnc_port_mannual') == "1" and 'block' or 'none' %>">
+                        <div class="cbi-value">
+                            <label class="cbi-value-title" for="vnc_port"><%:VNC Port%></label>
+                            <div class="cbi-value-field">
+                                <input type="number" id="vnc_port" name="vnc_port" value="<%=vm_vnc_port%>" min="5900" max="65535">
+                                <div class="cbi-value-description"><%:Port number for VNC connection (default: 5900).%></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        
+        <script>
+        function toggleVNCPort() {
+            var display = document.getElementById('display').value;
+            var vncConfigDiv = document.getElementById('vnc_config_div');
+            vncConfigDiv.style.display = (display == 'vnc') ? 'block' : 'none';
+            if (display == 'vnc') {
+                toggleVNCPortInput();
+            }
+        }
+        
+        function toggleVNCPortInput() {
+            var portManual = document.getElementById('vnc_port_mannual').checked;
+            var vncPortDiv = document.getElementById('vnc_port_div');
+            vncPortDiv.style.display = portManual ? 'block' : 'none';
+        }
+        </script>
+        <% end %>
+        
+        <% if step == 5 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Confirm Information%></legend>
+            
+            <div class="cbi-section-node">
+                <table class="cbi-tblsection">
+                    <tr>
+                        <td><%:VM Name%></td>
+                        <td><%=vm_name%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Description%></td>
+                        <td><%=vm_desc%></td>
+                    </tr>
+                    <tr>
+                        <td><%:CPUs%></td>
+                        <td><%=vm_cpus%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Memory%></td>
+                        <td><%=vm_memory%> MB</td>
+                    </tr>
+                    <tr>
+                        <td><%:Disk Size%></td>
+                        <td><%=vm_disk_size%> GB</td>
+                    </tr>
+                    <tr>
+                        <td><%:Disk File Path%></td>
+                        <td><%=vm_disk_path%></td>
+                    </tr>
+
+                    <tr>
+                        <td><%:ISO Image%></td>
+                        <td><%=luci.http.formvalue('cdrom_image') or 'None'%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Boot Type%></td>
+                        <td><%=vm_boot_type == "legacy" and "Legacy BIOS" or "UEFI"%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Display%></td>
+                        <td><% if vm_display == "none" then %><%:None (Headless)%><% else %><% if luci.http.formvalue('vnc_port_mannual') == "1" then %>VNC (Port: <%=vm_vnc_port%>)<% else %><%:VNC (Auto Port)%><% end %><% end %></td>
+                    </tr>
+                    <tr>
+                        <td><%:Auto-start%></td>
+                        <td><%=vm_autostart == "1" and "Yes" or "No"%></td>
+                    </tr>
+                </table>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        <div class="cbi-page-actions">
+            <% if step > 1 then %>
+            <input type="submit" name="prev" value="<%:Back%>" class="cbi-button cbi-button-reset">
+            <% end %>
+            
+            <% if step < 5 then %>
+            <input type="submit" name="next" value="<%:Next%>" class="cbi-button cbi-button-apply">
+            <% else %>
+            <input type="submit" name="create" value="<%:Create VM%>" class="cbi-button cbi-button-apply">
+            <% end %>
+            
+            <input type="button" value="<%:Cancel%>" class="cbi-button cbi-button-reset" onclick="window.location.href='<%=luci.dispatcher.build_url('admin', 'services', 'qemu', 'machines')%>'">
+        </div>
+    </form>
+</div>
+
+<style>
+.wizard-steps {
+    margin: 20px 0;
+}
+
+.wizard-steps ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: space-between;
+}
+
+.wizard-steps li {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    border-bottom: 2px solid #ccc;
+}
+
+.wizard-steps li.active {
+    border-bottom-color: #0066cc;
+    color: #0066cc;
+    font-weight: bold;
+}
+
+.cbi-tblsection {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.cbi-tblsection td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+
+.cbi-tblsection tr:first-child td {
+    border-top: 1px solid #eee;
+}
+
+.error-box {
+    background-color: #ffeaa7;
+    border-left: 4px solid #f39c12;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+</style>
+
+<%+footer%>

@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Create necessary directories
+mkdir -p /storage/qemu
+
+# Make init script executable
+chmod +x /etc/init.d/qemu
+
+exit 0

@@ -1,0 +1,456 @@
+<%+header%>
+
+<%
+local uci = require "luci.model.uci".cursor()
+local step = step or 1
+local device_type = device_type or "disk"
+local vm_name = luci.http.formvalue("vm") or ""
+local device_id = luci.http.formvalue("id") or ""
+local file_path = luci.http.formvalue("file") or ""
+local disk_size = luci.http.formvalue("size") or "10"
+local disk_format = luci.http.formvalue("format") or "qcow2"
+local iface = luci.http.formvalue("iface") or ""
+local readonly = luci.http.formvalue("readonly") or "0"
+local shareable = luci.http.formvalue("shareable") or "0"
+local removable = luci.http.formvalue("removable") or "0"
+local serial = luci.http.formvalue("serial") or ""
+local cache = luci.http.formvalue("cache") or ""
+local discard = luci.http.formvalue("discard") or ""
+local detect_zeroes = luci.http.formvalue("detect_zeroes") or ""
+
+local vm_list = {}
+uci:foreach("qemu", "vm", function(vm_section)
+    table.insert(vm_list, {name = vm_section.name or vm_section['.name'], title = vm_section.name or vm_section['.name']})
+end)
+
+local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
+%>
+
+<script>
+function validateForm() {
+    var form = document.getElementById('storage-wizard-form');
+    var visibleInputs = form.querySelectorAll('fieldset.cbi-section input[required], fieldset.cbi-section select[required]');
+    
+    for (var i = 0; i < visibleInputs.length; i++) {
+        if (!visibleInputs[i].value) {
+            alert('请填写必填字段: ' + visibleInputs[i].name);
+            return false;
+        }
+    }
+    
+    // 验证 ID 格式
+    var idInput = document.getElementById('id');
+    var deviceType = '<%=device_type%>';
+    
+    if (idInput && idInput.value) {
+        var id = idInput.value;
+        var valid = false;
+        
+        if (deviceType === 'disk' && /^hd[0-9]+$/.test(id)) {
+            valid = true;
+        } else if (deviceType === 'cdrom' && /^cd[0-9]+$/.test(id)) {
+            valid = true;
+        }
+        
+        if (!valid) {
+            var expectedFormat = deviceType === 'disk' ? 'hd0, hd1, etc.' : 
+                                'cd0, cd1, etc.';
+            alert('<%:Please enter a valid%> ' + deviceType + ' <%:ID format, for example:%> ' + expectedFormat);
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+function toggleRemovable() {
+    var iface = document.getElementById('iface').value;
+    var removableDiv = document.getElementById('removable_div');
+    removableDiv.style.display = (iface == 'usb') ? 'block' : 'none';
+}
+
+function toggleDiskOptions() {
+    var mode = document.getElementById('mode').value;
+    var createOptions = document.getElementById('create-options');
+    var createOptions2 = document.getElementById('create-options2');
+    
+    if (createOptions && createOptions2) {
+        if (mode == 'create') {
+            createOptions.classList.remove('hidden');
+            createOptions2.classList.remove('hidden');
+            if (document.getElementById('size')) {
+                document.getElementById('size').setAttribute('required', 'required');
+            }
+            if (document.getElementById('format')) {
+                document.getElementById('format').setAttribute('required', 'required');
+            }
+        } else {
+            createOptions.classList.add('hidden');
+            createOptions2.classList.add('hidden');
+            if (document.getElementById('size')) {
+                document.getElementById('size').removeAttribute('required');
+            }
+            if (document.getElementById('format')) {
+                document.getElementById('format').removeAttribute('required');
+            }
+        }
+    }
+}
+
+// 初始加载时执行
+window.onload = function() {
+    if (document.getElementById('mode')) {
+        toggleDiskOptions();
+    }
+    if (document.getElementById('iface')) {
+        toggleRemovable();
+    }
+};
+</script>
+
+<div class="cbi-map">
+    <h2><%:Storage Device Creation Wizard%></h2>
+    
+    <div class="cbi-map-descr">
+        <%:Follow these steps to create a new storage device.%>
+        <br /><%:Fill in the configuration information step by step and click "Create" at the end.%>
+    </div>
+    
+    <div class="wizard-steps">
+        <ol>
+            <li class="<%= step == 1 and 'active' or '' %>"><%:1. Basic Configuration%></li>
+            <li class="<%= step >= 2 and 'active' or '' %>"><%:2. Advanced Options%></li>
+            <li class="<%= step == 3 and 'active' or '' %>"><%:3. Confirmation%></li>
+        </ol>
+    </div>
+    
+    <form id="storage-wizard-form" action="<%=luci.dispatcher.build_url('admin', 'services', 'qemu', 'storage_wizard')%>" method="post" onsubmit="return validateForm()">
+        <input type="hidden" name="step" value="<%=step%>">
+        <input type="hidden" name="device_type" value="<%=device_type%>">
+        
+        <% if step >= 2 then %>
+        <input type="hidden" name="vm" value="<%=vm_name%>">
+        <input type="hidden" name="id" value="<%=device_id%>">
+        <input type="hidden" name="file" value="<%=file_path%>">
+        <% if device_type == "disk" then %>
+        <input type="hidden" name="size" value="<%=disk_size%>">
+        <input type="hidden" name="format" value="<%=disk_format%>">
+        <input type="hidden" name="mode" value="<%=luci.http.formvalue("mode") or "create"%>">
+        <% end %>
+        <% end %>
+        
+        <% if step == 3 then %>
+        <input type="hidden" name="iface" value="<%=iface%>">
+        <input type="hidden" name="readonly" value="<%=readonly%>">
+        <input type="hidden" name="shareable" value="<%=shareable%>">
+        <input type="hidden" name="removable" value="<%=removable%>">
+        <input type="hidden" name="serial" value="<%=serial%>">
+        <input type="hidden" name="cache" value="<%=cache%>">
+        <input type="hidden" name="discard" value="<%=discard%>">
+        <input type="hidden" name="detect_zeroes" value="<%=detect_zeroes%>">
+        <% end %>
+        
+        <% if step == 1 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Basic Configuration%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="vm"><%:Virtual Machine%></label>
+                    <div class="cbi-value-field">
+                        <select id="vm" name="vm" required>
+                            <option value=""><%:Select a virtual machine%></option>
+                            <% for _, vm in ipairs(vm_list) do %>
+                            <option value="<%=vm.name%>" <%=vm_name == vm.name and 'selected' or ''%>><%=vm.title%></option>
+                            <% end %>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the virtual machine to attach this storage device to.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="id"><% if device_type == "disk" then %><%:Disk ID%><% else %><%:CD-ROM ID%><% end %></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="id" name="id" value="<%=device_id%>" required>
+                        <div class="cbi-value-description"><% if device_type == "disk" then %>e.g., hd0<% else %>e.g., cd0<% end %></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="file"><% if device_type == "disk" then %><%:Disk File Path%><% else %><%:ISO File Path%><% end %></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="file" name="file" value="<%=file_path%>" required>
+                        <div class="cbi-value-description"><%:Specify the image file path. If not absolute, it will be relative to storage path.%></div>
+                        <div class="cbi-value-description"><%:Storage path: %> <%=storage_path%></div>
+                    </div>
+                </div>
+                
+                <% if device_type == "disk" then %>
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="mode"><%:Mode%></label>
+                    <div class="cbi-value-field">
+                        <select id="mode" name="mode" onchange="toggleDiskOptions()">
+                            <option value="create" <%= (luci.http.formvalue("mode") == "create" or not luci.http.formvalue("mode")) and 'selected' or '' %>> <%:Create new disk%> </option>
+                            <option value="import" <%= luci.http.formvalue("mode") == "import" and 'selected' or '' %>> <%:Import existing disk%> </option>
+                        </select>
+                        <div class="cbi-value-description"><%:Choose whether to create a new disk or import an existing one.%></div>
+                    </div>
+                </div>
+                
+                <div id="create-options" class="cbi-value">
+                    <label class="cbi-value-title" for="size"><%:Size (GB)%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="size" name="size" value="<%=disk_size%>" min="1" max="1024" required>
+                        <div class="cbi-value-description"><%:Size of the virtual disk to be created.%></div>
+                    </div>
+                </div>
+                
+                <div id="create-options2" class="cbi-value">
+                    <label class="cbi-value-title" for="format"><%:Disk Format%></label>
+                    <div class="cbi-value-field">
+                        <select id="format" name="format" required>
+                            <option value="qcow2" <%=disk_format == "qcow2" and 'selected' or ''%>>QCOW2</option>
+                            <option value="raw" <%=disk_format == "raw" and 'selected' or ''%>>RAW</option>
+                        </select>
+                        <div class="cbi-value-description"><%:QCOW2 is recommended for better performance and snapshot support.%></div>
+                    </div>
+                </div>
+                <% end %>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        <% if step == 2 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Advanced Options%></legend>
+            
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="iface"><%:Interface%></label>
+                    <div class="cbi-value-field">
+                        <select id="iface" name="iface" onchange="toggleRemovable()" required>
+                            <option value="virtio" <%=iface == "virtio" and 'selected' or ''%>>VirtIO</option>
+                            <option value="ide" <%=iface == "ide" and 'selected' or ''%>>IDE</option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the interface type for the storage device.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="readonly"><%:Read-only%></label>
+                    <div class="cbi-value-field">
+                        <input type="checkbox" id="readonly" name="readonly" value="1" <%=readonly == "1" and 'checked' or ''%>>
+                        <div class="cbi-value-description"><%:Set the device as read-only.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="shareable"><%:Shareable%></label>
+                    <div class="cbi-value-field">
+                        <input type="checkbox" id="shareable" name="shareable" value="1" <%=shareable == "1" and 'checked' or ''%>>
+                        <div class="cbi-value-description"><%:Allow the device to be shared between multiple VMs.%></div>
+                    </div>
+                </div>
+                
+                <div id="removable_div" style="display: <%=iface == "usb" and 'block' or 'none' %>">
+                    <div class="cbi-value">
+                        <label class="cbi-value-title" for="removable"><%:Removable%></label>
+                        <div class="cbi-value-field">
+                            <input type="checkbox" id="removable" name="removable" value="1" <%=removable == "1" and 'checked' or ''%>>
+                            <div class="cbi-value-description"><%:Mark the device as removable.%></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="serial"><%:Serial%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="serial" name="serial" value="<%=serial%>">
+                        <div class="cbi-value-description"><%:Optional serial number for the device.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="cache"><%:Cache Mode%></label>
+                    <div class="cbi-value-field">
+                        <select id="cache" name="cache">
+                            <option value="" <%=cache == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="none" <%=cache == "none" and 'selected' or ''%>>none</option>
+                            <option value="writethrough" <%=cache == "writethrough" and 'selected' or ''%>>writethrough</option>
+                            <option value="writeback" <%=cache == "writeback" and 'selected' or ''%>>writeback</option>
+                            <option value="directsync" <%=cache == "directsync" and 'selected' or ''%>>directsync</option>
+                            <option value="unsafe" <%=cache == "unsafe" and 'selected' or ''%>>unsafe</option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the cache mode for the device.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="discard"><%:Discard Mode%></label>
+                    <div class="cbi-value-field">
+                        <select id="discard" name="discard">
+                            <option value="" <%=discard == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="ignore" <%=discard == "ignore" and 'selected' or ''%>>ignore</option>
+                            <option value="unmap" <%=discard == "unmap" and 'selected' or ''%>>unmap</option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the discard mode for the device.%></div>
+                    </div>
+                </div>
+                
+                <div class="cbi-value">
+                    <label class="cbi-value-title" for="detect_zeroes"><%:Detect Zeroes%></label>
+                    <div class="cbi-value-field">
+                        <select id="detect_zeroes" name="detect_zeroes">
+                            <option value="" <%=detect_zeroes == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="off" <%=detect_zeroes == "off" and 'selected' or ''%>>off</option>
+                            <option value="on" <%=detect_zeroes == "on" and 'selected' or ''%>>on</option>
+                            <option value="unmap" <%=detect_zeroes == "unmap" and 'selected' or ''%>>unmap</option>
+                        </select>
+                        <div class="cbi-value-description"><%:Select the detect zeroes mode for the device.%></div>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        
+        <script>
+        toggleRemovable();
+        </script>
+        <% end %>
+        
+        <% if step == 3 then %>
+        <fieldset class="cbi-section">
+            <legend><%:Confirm Information%></legend>
+            
+            <div class="cbi-section-node">
+                <table class="cbi-tblsection">
+                    <tr>
+                        <td><%:Device Type%></td>
+                        <td><% if device_type == "disk" then %><%:Hard Disk%><% else %><%:CD-ROM%><% end %></td>
+                    </tr>
+                    <tr>
+                        <td><%:Virtual Machine%></td>
+                        <td><%=vm_name%></td>
+                    </tr>
+                    <tr>
+                        <td><% if device_type == "disk" then %><%:Disk ID%><% else %><%:CD-ROM ID%><% end %></td>
+                        <td><%=device_id%></td>
+                    </tr>
+                    <tr>
+                        <td><%:File Path%></td>
+                        <td><%=file_path%></td>
+                    </tr>
+                    <% if device_type == "disk" then %>
+                    <tr>
+                        <td><%:Size%></td>
+                        <td><%=disk_size%> GB</td>
+                    </tr>
+                    <tr>
+                        <td><%:Format%></td>
+                        <td><%=disk_format%></td>
+                    </tr>
+                    <% end %>
+                    <tr>
+                        <td><%:Interface%></td>
+                        <td><%=iface%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Read-only%></td>
+                        <td><%=readonly == "1" and "Yes" or "No"%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Shareable%></td>
+                        <td><%=shareable == "1" and "Yes" or "No"%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Removable%></td>
+                        <td><%=removable == "1" and "Yes" or "No"%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Serial%></td>
+                        <td><%=serial or "None"%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Cache Mode%></td>
+                        <td><%=cache == "" and "Hypervisor default" or cache%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Discard Mode%></td>
+                        <td><%=discard == "" and "Hypervisor default" or discard%></td>
+                    </tr>
+                    <tr>
+                        <td><%:Detect Zeroes%></td>
+                        <td><%=detect_zeroes == "" and "Hypervisor default" or detect_zeroes%></td>
+                    </tr>
+                </table>
+            </div>
+        </fieldset>
+        <% end %>
+        
+        <div class="cbi-page-actions">
+            <% if step > 1 then %>
+            <input type="submit" name="prev" value="<%:Back%>" class="cbi-button cbi-button-reset">
+            <% end %>
+            
+            <% if step < 3 then %>
+            <input type="submit" name="next" value="<%:Next%>" class="cbi-button cbi-button-apply">
+            <% else %>
+            <input type="submit" name="create" value="<%:Create%>" class="cbi-button cbi-button-apply">
+            <% end %>
+            
+            <input type="button" value="<%:Cancel%>" class="cbi-button cbi-button-reset" onclick="window.location.href='<%=luci.dispatcher.build_url('admin', 'services', 'qemu', 'storage')%>'">
+        </div>
+    </form>
+</div>
+
+<style>
+.wizard-steps {
+    margin: 20px 0;
+}
+
+.wizard-steps ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: space-between;
+}
+
+.wizard-steps li {
+    flex: 1;
+    text-align: center;
+    padding: 10px;
+    border-bottom: 2px solid #ccc;
+}
+
+.wizard-steps li.active {
+    border-bottom-color: #0066cc;
+    color: #0066cc;
+    font-weight: bold;
+}
+
+.cbi-tblsection {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.cbi-tblsection td {
+    padding: 8px;
+    border-bottom: 1px solid #eee;
+}
+
+.cbi-tblsection tr:first-child td {
+    border-top: 1px solid #eee;
+}
+
+/* 确保隐藏的选项不影响布局 */
+#create-options.hidden,
+#create-options2.hidden {
+    display: none;
+    margin: 0;
+    padding: 0;
+    height: 0;
+    overflow: hidden;
+}
+</style>
+
+<%+footer%>

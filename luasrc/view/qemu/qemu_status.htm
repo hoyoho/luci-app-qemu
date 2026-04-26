@@ -1,0 +1,22 @@
+<script type="text/javascript">//<![CDATA[
+XHR.poll(3, '<%=url([[admin]], [[services]], [[qemu]], [[status]])%>', null,
+	function(x, data) {
+		var tb = document.getElementById('qemu_status');
+		if (data && tb) {
+			if (data.running) {
+				var links = '<em><b><font color=green><%:QEMU Manager RUNNING%></font></b></em>';
+				tb.innerHTML = links;
+			} else {
+				tb.innerHTML = '<em><b><font color=red><%:QEMU Manager NOT RUNNING%></font></b></em>';
+			}
+		}
+	}
+);
+//]]>
+</script>
+<style>.mar-10 {margin-left: 50px; margin-right: 10px;}</style>
+<fieldset class="cbi-section">
+	<p id="qemu_status">
+		<em><%:Collecting data...%></em>
+	</p>
+</fieldset>
