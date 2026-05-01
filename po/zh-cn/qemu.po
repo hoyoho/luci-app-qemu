@@ -51,9 +51,6 @@ msgstr "看门狗"
 msgid "Channel"
 msgstr "通道"
 
-msgid "Virtio VSOCK"
-msgstr "Virtio VSOCK"
-
 msgid "QEMU Host Devices"
 msgstr "QEMU 主机设备"
 
@@ -971,24 +968,6 @@ msgstr "无效的 ID 格式。请使用类似 "
 
 msgid "Specify the image file path"
 msgstr "指定镜像文件路径"
-
-msgid "QEMU Virtio VSOCK Devices"
-msgstr "QEMU Virtio VSOCK 设备"
-
-msgid "VSOCK - Auto CID"
-msgstr "VSOCK - 自动 CID"
-
-msgid "Auto assign Guest CID"
-msgstr "自动分配客户端 CID"
-
-msgid "VSOCK - Manual CID"
-msgstr "VSOCK - 手动 CID"
-
-msgid "Manually specify Guest CID"
-msgstr "手动指定客户端 CID"
-
-msgid "Guest CID"
-msgstr "客户端 CID"
 
 msgid "QEMU Watchdog Devices"
 msgstr "QEMU 看门狗设备"

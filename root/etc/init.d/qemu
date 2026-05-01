@@ -306,55 +306,7 @@ build_storage_config() {
 	echo "$cmd"
 }
 
-# 校验 vsock 配置
-validate_vsock_config() {
-	local vm_ref=$1
-	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	
-	local vsocks=$(uci show qemu | grep -E "@vsock_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for vsock_ref in $vsocks; do
-		local vsock_type=$(echo "$vsock_ref" | sed 's/vsock_\([a-z]*\).*/\1/')
-		if [ "$vsock_type" = "manual" ]; then
-			local guest_cid=$(uci_get_by_name "$vsock_ref" "guest_cid" "")
-			if [ -z "$guest_cid" ]; then
-				logger -t qemu "Error: Guest CID is required for manual VSOCK"
-				echo "Error: Guest CID is required for manual VSOCK" >&2
-				return 1
-			fi
-			
-			if [ "$guest_cid" -lt 3 ] || [ "$guest_cid" -gt 16777215 ]; then
-				logger -t qemu "Error: Guest CID must be between 3 and 16777215"
-				echo "Error: Guest CID must be between 3 and 16777215" >&2
-				return 1
-			fi
-		fi
-	done
-	
-	return 0
-}
 
-# 解析VSOCK配置
-build_vsock_config() {
-	local vm_ref=$1
-	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	local cmd=""
-	local vsock_index=0
-	
-	local vsocks=$(uci show qemu | grep -E "@vsock_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for vsock_ref in $vsocks; do
-		local guest_cid=$(uci_get_by_name "$vsock_ref" "guest_cid" "3")
-		local vsock_type=$(echo "$vsock_ref" | sed 's/vsock_\([a-z]*\).*/\1/')
-		
-		if [ "$vsock_type" = "auto" ]; then
-			cmd="$cmd -device vhost-vsock-pci,id=vsock$vsock_index"
-		elif [ "$vsock_type" = "manual" ]; then
-			cmd="$cmd -device vhost-vsock-pci,id=vsock$vsock_index,guest-cid=$guest_cid"
-		fi
-		vsock_index=$((vsock_index + 1))
-	done
-	
-	echo "$cmd"
-}
 
 
 # 校验 channel 配置
@@ -490,7 +442,7 @@ validate_host_dev_config() {
 		done
 	
 	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-for host_ref in $mdev_hosts; do
+	for host_ref in $mdev_hosts; do
 	local host=$(uci_get_by_name "$host_ref" "host" "")
 	if [ -z "$host" ]; then
 		logger -t qemu "Error: MDEV host device is required"
@@ -500,8 +452,8 @@ for host_ref in $mdev_hosts; do
 	done
 
 # TPM Host Devices
-local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-for host_ref in $tpm_hosts; do
+	local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $tpm_hosts; do
 	local device_path=$(uci_get_by_name "$host_ref" "device_path" "")
 	if [ -z "$device_path" ]; then
 		logger -t qemu "Error: TPM device path is required"
@@ -516,7 +468,7 @@ for host_ref in $tpm_hosts; do
 	fi
 	done
 
-return 0
+	return 0
 }
 
 # 解析 host_dev 配置
@@ -977,7 +929,6 @@ build_qemu_command() {
 	cmd="$cmd $(build_video_config "$vm_ref")"
 	cmd="$cmd $(build_network_config "$vm_ref")"
 	cmd="$cmd $(build_input_config "$vm_ref")"
-	cmd="$cmd $(build_vsock_config "$vm_ref")"
 	cmd="$cmd $(build_channel_config "$vm_ref")"
 	cmd="$cmd $(build_host_dev_config "$vm_ref")"
 	cmd="$cmd $(build_interface_config "$vm_ref")"
@@ -1014,11 +965,6 @@ prepare_qemu_command() {
 	
 	# # 校验host配置
 	if ! validate_host_dev_config "$vm_ref"; then
-		return 1
-	fi
-
-	# 校验vsock配置
-	if ! validate_vsock_config "$vm_ref"; then
 		return 1
 	fi
 	

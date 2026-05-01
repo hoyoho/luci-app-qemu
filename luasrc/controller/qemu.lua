@@ -27,7 +27,6 @@ function index()
 	entry({"admin", "services", "qemu", "watchdog"}, cbi("qemu/watchdog/watchdog"), _("Watchdog")).leaf = true
 
 	entry({"admin", "services", "qemu", "channel"}, cbi("qemu/channel/channel"), _("Channel")).leaf = true
-	entry({"admin", "services", "qemu", "vsock"}, cbi("qemu/vsock/vsock"), _("Virtio VSOCK")).leaf = true
 	entry({"admin", "services", "qemu", "wizard"}, call("wizard")).leaf = true
 	entry({"admin", "services", "qemu", "status"}, call("act_status")).leaf = true
 	entry({"admin", "services", "qemu", "get_log"}, call("get_log")).leaf = true
