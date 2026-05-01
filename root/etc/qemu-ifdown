@@ -1,0 +1,17 @@
+#!/bin/sh
+
+QEMU_TAP_IF=$1
+QEMU_BRIDGE=br-lan
+
+if [ -z "$QEMU_TAP_IF" ]; then
+    echo "Error: No interface specified"
+    exit 1
+fi
+
+if brctl show "$QEMU_BRIDGE" 2>/dev/null | grep -q "$QEMU_TAP_IF"; then
+    brctl delif "$QEMU_BRIDGE" "$QEMU_TAP_IF"
+fi
+
+ip link set "$QEMU_TAP_IF" down
+
+exit 0

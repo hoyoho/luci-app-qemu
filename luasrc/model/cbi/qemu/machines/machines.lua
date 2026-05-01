@@ -156,13 +156,13 @@ if arg[1] then
     s:tab("boot", translate("Boot Settings"))
     
     boot = s:taboption("boot", ListValue, "boot", translate("Boot Order"))
-    boot:value("order=c,cd,net", translate("Hard Disk first, then CD-ROM, then Network"))
-    boot:value("order=c,net,cd", translate("Hard Disk first, then Network, then CD-ROM"))
-    boot:value("order=cd,c,net", translate("CD-ROM first, then Hard Disk, then Network"))
-    boot:value("order=cd,net,cd", translate("CD-ROM first, then Network, then Hard Disk"))
-    boot:value("order=net,c,cd", translate("Network first, then Hard Disk, then CD-ROM"))
-    boot:value("order=net,cd,c", translate("Network first, then CD-ROM, then Hard Disk"))
-    boot.default = "order=c,net,cd"
+    boot:value("order=cdn", translate("Hard Disk first, then CD-ROM, then Network"))
+    boot:value("order=cnd", translate("Hard Disk first, then Network, then CD-ROM"))
+    boot:value("order=dcn", translate("CD-ROM first, then Hard Disk, then Network"))
+    boot:value("order=dnc", translate("CD-ROM first, then Network, then Hard Disk"))
+    boot:value("order=ncd", translate("Network first, then Hard Disk, then CD-ROM"))
+    boot:value("order=ndc", translate("Network first, then CD-ROM, then Hard Disk"))
+    boot.default = "order=cdn"
     boot.description = translate("Select the boot device order for the VM")
 
     boot_menu = s:taboption("boot", ListValue, "boot_menu", translate("Boot Menu"))

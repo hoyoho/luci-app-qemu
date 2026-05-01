@@ -4,12 +4,14 @@ require "nixio.fs"
 require "luci.dispatcher"
 require "luci.model.uci"
 
+math.randomseed(os.time())
+
 local section_id = arg[1]
 local edit_type = ""
 
 if section_id then
     local uci = require("luci.model.uci").cursor()
-    local network_types = {"bridge", "user", "tap", "passt", "l2tpv3", "socket"}
+    local network_types = {"bridge", "user", "tap", "l2tpv3", "socket"}
     for _, nt in ipairs(network_types) do
         local config_type = "net_" .. nt
         uci:foreach("qemu", config_type, function(s)
@@ -120,26 +122,6 @@ elseif edit_type == "tap" then
     o.default = "0"
     o.datatype = "uinteger"
     o.description = translate("Size of the send buffer in bytes (0 = disabled)")
-
-    o = s:taboption("general", Value, "poll_us", translate("Poll Time"))
-    o.default = "0"
-    o.datatype = "uinteger"
-    o.description = translate("Maximum microseconds to spend on busy polling")
-elseif edit_type == "passt" then
-    o = s:taboption("general", Value, "path", translate("Passt Path"))
-    o.description = translate("Path to passt executable")
-
-    o = s:taboption("general", Value, "interface", translate("Passt Interface"))
-    o.description = translate("Network interface to use")
-
-    o = s:taboption("general", Value, "address", translate("Address"))
-    o.description = translate("IP address for the guest")
-
-    o = s:taboption("general", Value, "netmask", translate("Netmask"))
-    o.description = translate("Subnet mask for the guest")
-
-    o = s:taboption("general", Value, "gateway", translate("Gateway"))
-    o.description = translate("Default gateway for the guest")
 elseif edit_type == "l2tpv3" then
     o = s:taboption("general", Value, "src", translate("Source Address"))
     o.description = translate("Source IP address for L2TPv3")
@@ -157,10 +139,10 @@ elseif edit_type == "l2tpv3" then
     o.description = translate("Destination port for L2TPv3")
 elseif edit_type == "socket" then
     o = s:taboption("general", Value, "connect", translate("Connect"))
-    o.description = translate("Host:port to connect to")
+    o.description = translate("[Host:Port] to connect to")
 
     o = s:taboption("general", Value, "listen", translate("Listen"))
-    o.description = translate("[host]:port to listen on")
+    o.description = translate("[Host:Port] to listen on")
 end
 
 return m

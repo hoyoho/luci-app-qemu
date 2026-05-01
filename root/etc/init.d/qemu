@@ -18,6 +18,16 @@ uci_get_by_type() {
 	echo "${ret:=$3}"
 }
 
+uci_get_by_section() {
+	local section="$1"
+	local option="$2"
+	local default="$3"
+	local cmd="uci get $NAME.$section.$option"
+	logger -t qemu "uci_get_by_section: executing '$cmd'"
+	local ret=$(uci get $NAME.$section.$option 2>/dev/null)
+	echo "${ret:=$default}"
+}
+
 get_global_config() {
 	logger -t qemu "Getting global configuration"
 	storage_path=$(uci_get_by_type "global" "storage_path" "/storage/qemu")
@@ -689,128 +699,161 @@ build_network_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	local net_index=0
-	
-	local nets=$(uci show qemu | grep -E "@net_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for net_ref in $nets; do
-		local net_type=$(uci_get_by_name "$net_ref" "type" "bridge")
-		local net_model=$(uci_get_by_name "$net_ref" "model" "virtio-net-pci")
-		local net_mac=$(uci_get_by_name "$net_ref" "mac" "")
-		
-		
+
+	logger -t qemu "build_network_config: vm_ref=$vm_ref vm_name=$vm_name"
+
+	local nets=$(uci show qemu | grep -E "qemu\.@net_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	logger -t qemu "build_network_config: found nets=$nets"
+
+	for net_section in $nets; do
+		logger -t qemu "build_network_config: processing net_section=$net_section"
+
+		local net_type="${net_section##*_}"
+		net_type="${net_type%%\[*}"
+		logger -t qemu "build_network_config: extracted net_type=$net_type from net_section=$net_section"
+
+		local net_ref="${net_section#*.}"
+		logger -t qemu "build_network_config: net_ref=$net_ref"
+
+		local net_model=$(uci_get_by_section "$net_ref" "model" "virtio-net-pci")
+		local net_mac=$(uci_get_by_section "$net_ref" "mac" "")
+
+		logger -t qemu "build_network_config: net_type=$net_type net_model=$net_model net_mac=$net_mac"
+
 		local device_param="-device $net_model,netdev=net$net_index"
 		if [ -n "$net_mac" ]; then
 			device_param="$device_param,mac=$net_mac"
+			logger -t qemu "build_network_config: added mac to device_param"
 		fi
 
 		local netdev_param=""
 		case "$net_type" in
 			bridge)
-				local net_bridge=$(uci_get_by_name "$net_ref" "bridge" "br-lan")
-				local net_helper=$(uci_get_by_name "$net_ref" "helper" "/usr/lib/qemu-bridge-helper")
-				
+				local net_bridge=$(uci_get_by_section "$net_ref" "bridge" "br-lan")
+				local net_helper=$(uci_get_by_section "$net_ref" "helper" "")
+
 				netdev_param="-netdev bridge,br=$net_bridge,id=net$net_index"
-		if [ -n "$net_helper" ] && [ "$net_helper" != "/usr/lib/qemu-bridge-helper" ]; then
-			netdev_param="$netdev_param,helper=$net_helper"
-		fi
+				logger -t qemu "build_network_config: bridge net_bridge=$net_bridge"
+				if [ -n "$net_helper" ]; then
+					netdev_param="$netdev_param,helper=$net_helper"
+					logger -t qemu "build_network_config: added helper=$net_helper"
+				fi
 				;;
 			user)
-				local net_hostfwd=$(uci_get_by_name "$net_ref" "hostfwd" "")
-				local net_net=$(uci_get_by_name "$net_ref" "net" "10.0.2.0/24")
-				local net_dhcpstart=$(uci_get_by_name "$net_ref" "dhcpstart" "10.0.2.15")
-				local net_dns=$(uci_get_by_name "$net_ref" "dns" "10.0.2.3")
-				
+				local net_hostfwd=$(uci_get_by_section "$net_ref" "hostfwd" "")
+				local net_net=$(uci_get_by_section "$net_ref" "net" "")
+				local net_dhcpstart=$(uci_get_by_section "$net_ref" "dhcpstart" "")
+				local net_dns=$(uci_get_by_section "$net_ref" "dns" "")
+
 				netdev_param="-netdev user,id=net$net_index"
-		if [ -n "$net_hostfwd" ]; then
-			netdev_param="$netdev_param,hostfwd=$net_hostfwd"
-		fi
-			if [ -n "$net_net" ] && [ "$net_net" != "10.0.2.0/24" ]; then
-				netdev_param="$netdev_param,net=$net_net"
-			fi
-			if [ -n "$net_dhcpstart" ] && [ "$net_dhcpstart" != "10.0.2.15" ]; then
-				netdev_param="$netdev_param,dhcpstart=$net_dhcpstart"
-			fi
-			if [ -n "$net_dns" ] && [ "$net_dns" != "10.0.2.3" ]; then
-				netdev_param="$netdev_param,dns=$net_dns"
-			fi
+				logger -t qemu "build_network_config: user mode configured"
+				if [ -n "$net_hostfwd" ]; then
+					netdev_param="$netdev_param,hostfwd=$net_hostfwd"
+					logger -t qemu "build_network_config: added hostfwd=$net_hostfwd"
+				fi
+				if [ -n "$net_net" ]; then
+					netdev_param="$netdev_param,net=$net_net"
+					logger -t qemu "build_network_config: added net=$net_net"
+				fi
+				if [ -n "$net_dhcpstart" ]; then
+					netdev_param="$netdev_param,dhcpstart=$net_dhcpstart"
+					logger -t qemu "build_network_config: added dhcpstart=$net_dhcpstart"
+				fi
+				if [ -n "$net_dns" ]; then
+					netdev_param="$netdev_param,dns=$net_dns"
+					logger -t qemu "build_network_config: added dns=$net_dns"
+				fi
 				;;
 			tap)
-				local net_ifname=$(uci_get_by_name "$net_ref" "ifname" "tap0")
-				local net_script=$(uci_get_by_name "$net_ref" "script" "/etc/qemu-ifup")
-				local net_downscript=$(uci_get_by_name "$net_ref" "downscript" "/etc/qemu-ifdown")
-				local net_sndbuf=$(uci_get_by_name "$net_ref" "sndbuf" "0")
-				local net_poll_us=$(uci_get_by_name "$net_ref" "poll_us" "0")
-				
+				local net_ifname=$(uci_get_by_section "$net_ref" "ifname" "")
+				local net_script=$(uci_get_by_section "$net_ref" "script" "")
+				local net_downscript=$(uci_get_by_section "$net_ref" "downscript" "")
+				local net_sndbuf=$(uci_get_by_section "$net_ref" "sndbuf" "")
+
 				netdev_param="-netdev tap,id=net$net_index"
-		if [ -n "$net_ifname" ]; then
-			netdev_param="$netdev_param,ifname=$net_ifname"
-		fi
-		if [ -n "$net_script" ] && [ "$net_script" != "/etc/qemu-ifup" ]; then
-			netdev_param="$netdev_param,script=$net_script"
-		fi
-		if [ -n "$net_downscript" ] && [ "$net_downscript" != "/etc/qemu-ifdown" ]; then
-			netdev_param="$netdev_param,downscript=$net_downscript"
-		fi
-				if [ -n "$net_sndbuf" ] && [ "$net_sndbuf" != "0" ]; then
+				logger -t qemu "build_network_config: tap mode configured"
+				if [ -n "$net_ifname" ]; then
+					netdev_param="$netdev_param,ifname=$net_ifname"
+					logger -t qemu "build_network_config: added ifname=$net_ifname"
+				fi
+				if [ -n "$net_script" ]; then
+					netdev_param="$netdev_param,script=$net_script"
+					logger -t qemu "build_network_config: added script=$net_script"
+				else
+					netdev_param="$netdev_param,script=no"
+					logger -t qemu "build_network_config: added script=no (no script configured)"
+				fi
+				if [ -n "$net_downscript" ]; then
+					netdev_param="$netdev_param,downscript=$net_downscript"
+					logger -t qemu "build_network_config: added downscript=$net_downscript"
+				else
+					netdev_param="$netdev_param,downscript=no"
+					logger -t qemu "build_network_config: added downscript=no (no script configured)"
+				fi
+				if [ -n "$net_sndbuf" ]; then
 					netdev_param="$netdev_param,sndbuf=$net_sndbuf"
+					logger -t qemu "build_network_config: added sndbuf=$net_sndbuf"
 				fi
-				if [ -n "$net_poll_us" ] && [ "$net_poll_us" != "0" ]; then
-					netdev_param="$netdev_param,poll_us=$net_poll_us"
-				fi
-				;;
-			passt)
-				local net_path=$(uci_get_by_name "$net_ref" "path" "")
-				local net_interface=$(uci_get_by_name "$net_ref" "interface" "")
-				
-				netdev_param="-netdev passt,id=net$net_index"
-		if [ -n "$net_path" ]; then
-			netdev_param="$netdev_param,path=$net_path"
-		fi
-		if [ -n "$net_interface" ]; then
-			netdev_param="$netdev_param,interface=$net_interface"
-		fi
 				;;
 			l2tpv3)
-				local net_src=$(uci_get_by_name "$net_ref" "src" "")
-				local net_dst=$(uci_get_by_name "$net_ref" "dst" "")
-				local net_srcport=$(uci_get_by_name "$net_ref" "srcport" "")
-				local net_dstport=$(uci_get_by_name "$net_ref" "dstport" "")
-				local net_txsession=$(uci_get_by_name "$net_ref" "txsession" "")
-				
+				local net_src=$(uci_get_by_section "$net_ref" "src" "")
+				local net_dst=$(uci_get_by_section "$net_ref" "dst" "")
+				local net_srcport=$(uci_get_by_section "$net_ref" "srcport" "")
+				local net_dstport=$(uci_get_by_section "$net_ref" "dstport" "")
+				local net_txsession=$(uci_get_by_section "$net_ref" "txsession" "")
+
+				logger -t qemu "build_network_config: l2tpv3 src=$net_src dst=$net_dst"
 				if [ -n "$net_src" ] && [ -n "$net_dst" ]; then
 					netdev_param="-netdev l2tpv3,id=net$net_index,src=$net_src,dst=$net_dst"
 					if [ -n "$net_srcport" ]; then
 						netdev_param="$netdev_param,srcport=$net_srcport"
+						logger -t qemu "build_network_config: added srcport=$net_srcport"
 					fi
 					if [ -n "$net_dstport" ]; then
 						netdev_param="$netdev_param,dstport=$net_dstport"
+						logger -t qemu "build_network_config: added dstport=$net_dstport"
 					fi
 					if [ -n "$net_txsession" ]; then
 						netdev_param="$netdev_param,txsession=$net_txsession"
+						logger -t qemu "build_network_config: added txsession=$net_txsession"
 					fi
+				else
+					logger -t qemu "build_network_config: l2tpv3 skipped - missing src or dst"
 				fi
 				;;
 			socket)
-				local net_connect=$(uci_get_by_name "$net_ref" "connect" "")
-				local net_listen=$(uci_get_by_name "$net_ref" "listen" "")
-				
+				local net_connect=$(uci_get_by_section "$net_ref" "connect" "")
+				local net_listen=$(uci_get_by_section "$net_ref" "listen" "")
+
 				netdev_param="-netdev socket,id=net$net_index"
-				if [ -n "$net_listen" ]; then
+				logger -t qemu "build_network_config: socket connect=$net_connect listen=$net_listen"
+				if [ -n "$net_listen" ] && [ -n "$net_connect" ]; then
 					netdev_param="$netdev_param,listen=$net_listen"
+					logger -t qemu "build_network_config: both listen and connect set, using listen"
+				elif [ -n "$net_listen" ]; then
+					netdev_param="$netdev_param,listen=$net_listen"
+					logger -t qemu "build_network_config: using listen=$net_listen"
 				elif [ -n "$net_connect" ]; then
 					netdev_param="$netdev_param,connect=$net_connect"
+					logger -t qemu "build_network_config: using connect=$net_connect"
 				fi
 				;;
 			*)
 				netdev_param="-netdev bridge,br=br-lan,id=net$net_index"
+				logger -t qemu "build_network_config: unknown type=$net_type, using default bridge"
 				;;
 		esac
-		
+
 		if [ -n "$netdev_param" ]; then
 			cmd="$cmd $netdev_param $device_param"
+			logger -t qemu "build_network_config: added netdev=$netdev_param device=$device_param"
 			net_index=$((net_index + 1))
+		else
+			logger -t qemu "build_network_config: netdev_param is empty, skipping"
 		fi
 	done
-	
+
+	logger -t qemu "build_network_config: final cmd=$cmd"
 	echo "$cmd"
 }
 
@@ -840,11 +883,10 @@ build_display_config() {
 				display_param="$display_param127.0.0.1:"
 			fi
 			if [ "$display_port_mannual" = "1" ]; then
-				# Convert full port (e.g. 5901) to VNC port offset (e.g. 1)
 				local vnc_port_offset=$((display_port - 5900))
 				display_param="${display_param}${vnc_port_offset}"
 			else
-				display_param="${display_param}0"
+				display_param="${display_param}0,to=20"
 			fi
 			if [ "$display_password_enabled" = "1" ] && [ -n "$display_password" ]; then
 				display_param="$display_param,password"

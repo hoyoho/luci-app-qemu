@@ -711,6 +711,12 @@ msgstr "Ramfb"
 msgid "VGA"
 msgstr "VGA"
 
+msgid "Video Type"
+msgstr "视频类型"
+
+msgid "Select the video device type for the virtual machine."
+msgstr "选择虚拟机的视频设备类型。"
+
 msgid "VM Reference"
 msgstr "虚拟机索引"
 
@@ -750,17 +756,11 @@ msgstr "MAC 地址"
 msgid "Model"
 msgstr "模型"
 
-msgid "Queues"
-msgstr "队列"
-
 msgid "User (NAT) Networks"
 msgstr "用户 (NAT) 网络"
 
 msgid "TAP Networks"
 msgstr "TAP 网络"
-
-msgid "Passt Networks"
-msgstr "Passt 网络"
 
 msgid "L2TPv3 Networks"
 msgstr "L2TPv3 网络"
@@ -861,15 +861,6 @@ msgstr "轮询时间"
 msgid "Maximum microseconds to spend on busy polling"
 msgstr "在忙轮询上花费的最大微秒数"
 
-msgid "Passt Path"
-msgstr "Passt 路径"
-
-msgid "Path to passt executable"
-msgstr "Passt 可执行文件的路径"
-
-msgid "Passt Interface"
-msgstr "Passt 接口"
-
 msgid "Network interface to use"
 msgstr "要使用的网络接口"
 
@@ -924,14 +915,14 @@ msgstr "L2TPv3 的目标端口"
 msgid "Connect"
 msgstr "连接"
 
-msgid "Host:port to connect to"
-msgstr "要连接的主机:端口"
+msgid "[Host:Port] to connect to"
+msgstr "要连接的 [Host:Port]"
 
 msgid "Listen"
 msgstr "监听"
 
-msgid "[host]:port to listen on"
-msgstr "要监听的 [主机]:端口"
+msgid "[Host:Port] to listen on"
+msgstr "要监听的 [Host:Port]"
 
 msgid "QEMU Sound Devices"
 msgstr "QEMU 声音设备"

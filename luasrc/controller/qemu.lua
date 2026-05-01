@@ -220,6 +220,7 @@ function wizard()
 		local vm_vnc_port_mannual = luci.http.formvalue("vnc_port_mannual") or "0"
 		local vm_cdrom_image = luci.http.formvalue("cdrom_image")
 		local vm_disk_path = luci.http.formvalue("disk_path")
+		local vm_video_type = luci.http.formvalue("video_type") or "vga"
 		
 		-- 检查磁盘文件是否已存在
 		local file = io.open(vm_disk_path, "r")
@@ -242,7 +243,7 @@ function wizard()
 		uci:set("qemu", vm_section, "smp_cores", vm_cpus)
 		uci:set("qemu", vm_section, "smp_threads", "1")
 		uci:set("qemu", vm_section, "mem_size", vm_memory)
-		uci:set("qemu", vm_section, "boot", "order=c")
+		uci:set("qemu", vm_section, "boot", "order=cdn")
 		uci:set("qemu", vm_section, "uefi", vm_boot_type == "uefi" and "1" or "0")
 
 		-- 创建磁盘配置
@@ -280,6 +281,11 @@ function wizard()
 			if vm_vnc_port_mannual == "1" then
 				uci:set("qemu", display_section, "port", vm_vnc_port)
 			end
+
+			-- 创建视频设备配置
+			local video_section = uci:add("qemu", "video")
+			uci:set("qemu", video_section, "vm", vm_name)
+			uci:set("qemu", video_section, "type", vm_video_type)
 		end
 		
 		-- 保存配置

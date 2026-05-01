@@ -14,6 +14,7 @@ local vm_bridge = luci.http.formvalue("bridge") or "br-lan"
 local vm_boot_type = luci.http.formvalue("boot_type") or "legacy"
 local vm_display = luci.http.formvalue("display") or "none"
 local vm_vnc_port = luci.http.formvalue("vnc_port") or "5900"
+local vm_video_type = luci.http.formvalue("video_type") or "vga"
 
 -- 获取默认存储路径
 local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
@@ -117,6 +118,7 @@ function validateForm() {
         <input type="hidden" name="display" value="<%=vm_display%>">
         <input type="hidden" name="vnc_port" value="<%=vm_vnc_port%>">
         <input type="hidden" name="vnc_port_mannual" value="<%=luci.http.formvalue('vnc_port_mannual') or '0'%>">
+        <input type="hidden" name="video_type" value="<%=vm_video_type%>">
         <% end %>
         
         <% if step == 1 then %>
@@ -225,7 +227,7 @@ function validateForm() {
         <% if step == 4 then %>
         <fieldset class="cbi-section">
             <legend><%:Display Configuration%></legend>
-            
+
             <div class="cbi-section-node">
                 <div class="cbi-value">
                     <label class="cbi-value-title" for="display"><%:Display Type%></label>
@@ -237,7 +239,7 @@ function validateForm() {
                         <div class="cbi-value-description"><%:Select the display method for the virtual machine.%></div>
                     </div>
                 </div>
-                
+
                 <div id="vnc_config_div" style="display: <%=vm_display == "vnc" and 'block' or 'none' %>">
                     <div class="cbi-value">
                         <label class="cbi-value-title" for="vnc_port_mannual"><%:Manual Port%></label>
@@ -246,7 +248,7 @@ function validateForm() {
                             <div class="cbi-value-description"><%:Check to specify a manual port, uncheck for auto port allocation.%></div>
                         </div>
                     </div>
-                    
+
                     <div id="vnc_port_div" style="display: <%=luci.http.formvalue('vnc_port_mannual') == "1" and 'block' or 'none' %>">
                         <div class="cbi-value">
                             <label class="cbi-value-title" for="vnc_port"><%:VNC Port%></label>
@@ -254,6 +256,18 @@ function validateForm() {
                                 <input type="number" id="vnc_port" name="vnc_port" value="<%=vm_vnc_port%>" min="5900" max="65535">
                                 <div class="cbi-value-description"><%:Port number for VNC connection (default: 5900).%></div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="cbi-value">
+                        <label class="cbi-value-title" for="video_type"><%:Video Device Type%></label>
+                        <div class="cbi-value-field">
+                            <select id="video_type" name="video_type">
+                                <option value="vga" <%=(luci.http.formvalue('video_type') or 'vga') == 'vga' and 'selected' or ''%>><%:VGA%></option>
+                                <option value="bochs" <%=luci.http.formvalue('video_type') == 'bochs' and 'selected' or ''%>><%:Bochs%></option>
+                                <option value="ramfb" <%=luci.http.formvalue('video_type') == 'ramfb' and 'selected' or ''%>><%:Ramfb%></option>
+                            </select>
+                            <div class="cbi-value-description"><%:Select the video device type for the virtual machine.%></div>
                         </div>
                     </div>
                 </div>
@@ -321,9 +335,15 @@ function validateForm() {
                         <td><%:Display%></td>
                         <td><% if vm_display == "none" then %><%:None (Headless)%><% else %><% if luci.http.formvalue('vnc_port_mannual') == "1" then %>VNC (Port: <%=vm_vnc_port%>)<% else %><%:VNC (Auto Port)%><% end %><% end %></td>
                     </tr>
+                    <% if vm_display == "vnc" then %>
+                    <tr>
+                        <td><%:Video Type%></td>
+                        <td><%=vm_video_type%></td>
+                    </tr>
+                    <% end %>
                     <tr>
                         <td><%:Auto-start%></td>
-                        <td><%=vm_autostart == "1" and "Yes" or "No"%></td>
+                        <td><%=vm_autostart == "1" and translate("Yes") or translate("No")%></td>
                     </tr>
                 </table>
             </div>

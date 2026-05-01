@@ -41,9 +41,6 @@ o = s1:option(DummyValue, "mac", translate("MAC Address"))
 -- 模型
 o = s1:option(DummyValue, "model", translate("Model"))
 
--- 队列
-o = s1:option(DummyValue, "queues", translate("Queues"))
-
 -- User网络
 local s2 = m:section(TypedSection, "net_user", translate("User (NAT) Networks"))
 s2.addremove = true
@@ -71,9 +68,6 @@ o = s2:option(DummyValue, "mac", translate("MAC Address"))
 
 -- 模型
 o = s2:option(DummyValue, "model", translate("Model"))
-
--- 队列
-o = s2:option(DummyValue, "queues", translate("Queues"))
 
 -- TAP网络
 local s3 = m:section(TypedSection, "net_tap", translate("TAP Networks"))
@@ -103,22 +97,19 @@ o = s3:option(DummyValue, "mac", translate("MAC Address"))
 -- 模型
 o = s3:option(DummyValue, "model", translate("Model"))
 
--- 队列
-o = s3:option(DummyValue, "queues", translate("Queues"))
-
--- Passt网络
-local s4 = m:section(TypedSection, "net_passt", translate("Passt Networks"))
+-- L2TPv3网络
+local s4 = m:section(TypedSection, "net_l2tpv3", translate("L2TPv3 Networks"))
 s4.addremove = true
 s4.anonymous = true
 s4.template = "cbi/tblsection"
 s4.sortable = true
-s4.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", "%s", "passt")
+s4.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", "%s", "l2tpv3")
 
 -- 修复创建函数：跳转到编辑页面
 s4.create = function(self, section)
     local new_section = TypedSection.create(self, section)
     -- 跳转到编辑页面
-    luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", new_section) .. "?network_type=passt")
+    luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", new_section) .. "?network_type=l2tpv3")
     return new_section
 end
 
@@ -134,22 +125,19 @@ o = s4:option(DummyValue, "mac", translate("MAC Address"))
 -- 模型
 o = s4:option(DummyValue, "model", translate("Model"))
 
--- 队列
-o = s4:option(DummyValue, "queues", translate("Queues"))
-
--- L2TPv3网络
-local s5 = m:section(TypedSection, "net_l2tpv3", translate("L2TPv3 Networks"))
+-- Socket网络
+local s5 = m:section(TypedSection, "net_socket", translate("Socket Networks"))
 s5.addremove = true
 s5.anonymous = true
 s5.template = "cbi/tblsection"
 s5.sortable = true
-s5.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", "%s", "l2tpv3")
+s5.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", "%s", "socket")
 
 -- 修复创建函数：跳转到编辑页面
 s5.create = function(self, section)
     local new_section = TypedSection.create(self, section)
     -- 跳转到编辑页面
-    luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", new_section) .. "?network_type=l2tpv3")
+    luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", new_section) .. "?network_type=socket")
     return new_section
 end
 
@@ -165,39 +153,11 @@ o = s5:option(DummyValue, "mac", translate("MAC Address"))
 -- 模型
 o = s5:option(DummyValue, "model", translate("Model"))
 
--- 队列
-o = s5:option(DummyValue, "queues", translate("Queues"))
+-- Connect
+o = s5:option(DummyValue, "connect", translate("Connect"))
 
--- Socket网络
-local s6 = m:section(TypedSection, "net_socket", translate("Socket Networks"))
-s6.addremove = true
-s6.anonymous = true
-s6.template = "cbi/tblsection"
-s6.sortable = true
-s6.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", "%s", "socket")
-
--- 修复创建函数：跳转到编辑页面
-s6.create = function(self, section)
-    local new_section = TypedSection.create(self, section)
-    -- 跳转到编辑页面
-    luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks", "network_edit", new_section) .. "?network_type=socket")
-    return new_section
-end
-
--- 虚拟机选择
-o = s6:option(DummyValue, "vm", translate("VM Reference"))
-
--- 接口ID
-o = s6:option(DummyValue, "id", translate("Interface ID"))
-
--- MAC地址
-o = s6:option(DummyValue, "mac", translate("MAC Address"))
-
--- 模型
-o = s6:option(DummyValue, "model", translate("Model"))
-
--- 队列
-o = s6:option(DummyValue, "queues", translate("Queues"))
+-- Listen
+o = s5:option(DummyValue, "listen", translate("Listen"))
 
 -- 返回主 Map
 return m
