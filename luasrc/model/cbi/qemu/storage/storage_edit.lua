@@ -104,7 +104,7 @@ o.validate = function(self, value, section)
         end
         
         if not valid then
-            local expected_format = disk_type == "disk" and "hd0, hd1, etc." or "cd0, cd1, etc."
+            local expected_format = disk_type == "disk" and translate("hd0, hd1, etc.") or translate("cd0, cd1, etc.")
             return nil, translate("Invalid ID format. Please use format like ") .. expected_format
         end
     end
@@ -168,11 +168,11 @@ o = s:option(Flag, "removable", translate("Removable"))
 o:depends({iface = "usb"})
 o.rmempty = true
 
-o = s:option(Value, "serial", translate("Serial"))
+o = s:option(Value, "serial", translate("Serial Number"))
 o.rmempty = true
 
 o = s:option(ListValue, "cache", translate("Cache Mode"))
-o:value("", translate("Hypervisor default"))
+o:value("", translate("Default"))
 o:value("none", "none")
 o:value("writethrough", "writethrough")
 o:value("writeback", "writeback")
@@ -182,14 +182,14 @@ o.default = ""
 o.rmempty = true
 
 o = s:option(ListValue, "discard", translate("Discard Mode"))
-o:value("", translate("Hypervisor default"))
+o:value("", translate("Default"))
 o:value("ignore", "ignore")
 o:value("unmap", "unmap")
 o.default = ""
 o.rmempty = true
 
 o = s:option(ListValue, "detect_zeroes", translate("Detect Zeroes"))
-o:value("", translate("Hypervisor default"))
+o:value("", translate("Default"))
 o:value("off", "off")
 o:value("on", "on")
 o:value("unmap", "unmap")

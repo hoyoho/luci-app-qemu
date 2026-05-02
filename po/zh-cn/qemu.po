@@ -207,8 +207,14 @@ msgstr "磁盘 ID"
 msgid "CD-ROM ID"
 msgstr "光盘 ID"
 
+msgid "Disk File"
+msgstr "磁盘文件"
+
 msgid "Disk File Path"
 msgstr "磁盘文件路径"
+
+msgid "ISO File"
+msgstr "ISO 文件"
 
 msgid "ISO File Path"
 msgstr "ISO 文件路径"
@@ -270,7 +276,7 @@ msgstr "可移动"
 msgid "Mark the device as removable."
 msgstr "将设备标记为可移动。"
 
-msgid "Serial"
+msgid "Serial Number"
 msgstr "序列号"
 
 msgid "Optional serial number for the device."
@@ -279,8 +285,8 @@ msgstr "设备的可选序列号。"
 msgid "Cache Mode"
 msgstr "缓存模式"
 
-msgid "Hypervisor default"
-msgstr "虚拟机监控程序默认值"
+msgid "Default"
+msgstr "默认"
 
 msgid "Select the cache mode for the device."
 msgstr "选择设备的缓存模式。"

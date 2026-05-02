@@ -274,7 +274,7 @@ window.onload = function() {
                     <label class="cbi-value-title" for="cache"><%:Cache Mode%></label>
                     <div class="cbi-value-field">
                         <select id="cache" name="cache">
-                            <option value="" <%=cache == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="" <%=cache == "" and 'selected' or ''%>><%:Default%></option>
                             <option value="none" <%=cache == "none" and 'selected' or ''%>>none</option>
                             <option value="writethrough" <%=cache == "writethrough" and 'selected' or ''%>>writethrough</option>
                             <option value="writeback" <%=cache == "writeback" and 'selected' or ''%>>writeback</option>
@@ -289,7 +289,7 @@ window.onload = function() {
                     <label class="cbi-value-title" for="discard"><%:Discard Mode%></label>
                     <div class="cbi-value-field">
                         <select id="discard" name="discard">
-                            <option value="" <%=discard == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="" <%=discard == "" and 'selected' or ''%>><%:Default%></option>
                             <option value="ignore" <%=discard == "ignore" and 'selected' or ''%>>ignore</option>
                             <option value="unmap" <%=discard == "unmap" and 'selected' or ''%>>unmap</option>
                         </select>
@@ -301,7 +301,7 @@ window.onload = function() {
                     <label class="cbi-value-title" for="detect_zeroes"><%:Detect Zeroes%></label>
                     <div class="cbi-value-field">
                         <select id="detect_zeroes" name="detect_zeroes">
-                            <option value="" <%=detect_zeroes == "" and 'selected' or ''%>><%:Hypervisor default%></option>
+                            <option value="" <%=detect_zeroes == "" and 'selected' or ''%>><%:Default%></option>
                             <option value="off" <%=detect_zeroes == "off" and 'selected' or ''%>>off</option>
                             <option value="on" <%=detect_zeroes == "on" and 'selected' or ''%>>on</option>
                             <option value="unmap" <%=detect_zeroes == "unmap" and 'selected' or ''%>>unmap</option>
@@ -371,15 +371,15 @@ window.onload = function() {
                     </tr>
                     <tr>
                         <td><%:Cache Mode%></td>
-                        <td><%=cache == "" and "Hypervisor default" or cache%></td>
+                        <td><%=cache == "" and "Default" or cache%></td>
                     </tr>
                     <tr>
                         <td><%:Discard Mode%></td>
-                        <td><%=discard == "" and "Hypervisor default" or discard%></td>
+                        <td><%=discard == "" and "Default" or discard%></td>
                     </tr>
                     <tr>
                         <td><%:Detect Zeroes%></td>
-                        <td><%=detect_zeroes == "" and "Hypervisor default" or detect_zeroes%></td>
+                        <td><%=detect_zeroes == "" and "Default" or detect_zeroes%></td>
                     </tr>
                 </table>
             </div>
