@@ -30,7 +30,7 @@ end
 -- 枚举PCI设备
 local function get_pci_devices()
     local pci_devices = {}
-    local handle = io.popen("lspci 2>/dev/null")
+    local handle = io.popen("lspci -D 2>/dev/null")
     if handle then
         local line
         for line in handle:lines() do

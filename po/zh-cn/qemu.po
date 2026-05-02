@@ -48,9 +48,6 @@ msgstr "主机设备"
 msgid "Watchdog"
 msgstr "看门狗"
 
-msgid "Channel"
-msgstr "通道"
-
 msgid "QEMU Host Devices"
 msgstr "QEMU 主机设备"
 
@@ -158,45 +155,6 @@ msgstr "控制台"
 
 msgid "Virtio"
 msgstr "Virtio"
-
-msgid "QEMU Channel Devices"
-msgstr "QEMU 通道设备"
-
-msgid "File Channels"
-msgstr "文件通道"
-
-msgid "Output to a file"
-msgstr "输出到文件"
-
-msgid "Name"
-msgstr "名称"
-
-msgid "com.redhat.spice.0"
-msgstr "com.redhat.spice.0"
-
-msgid "org.libguestfs.channel.0"
-msgstr "org.libguestfs.channel.0"
-
-msgid "org.qemu.guest_agent.0"
-msgstr "org.qemu.guest_agent.0"
-
-msgid "org.spice-space.webdav.0"
-msgstr "org.spice-space.webdav.0"
-
-msgid "Pseudo TTY Channels"
-msgstr "伪终端通道"
-
-msgid "Spice Agent Channels"
-msgstr "Spice 代理通道"
-
-msgid "Spice agent"
-msgstr "Spice 代理"
-
-msgid "Spice Port Channels"
-msgstr "Spice 端口通道"
-
-msgid "Spice port"
-msgstr "Spice 端口"
 
 msgid "Clear logs"
 msgstr "清除日志"
@@ -533,21 +491,6 @@ msgstr "存储路径"
 
 msgid "Machine Settings"
 msgstr "机器设置"
-
-msgid "Enter channel"
-msgstr "输入通道"
-
-msgid "UNIX Socket - Auto"
-msgstr "UNIX 套接字 - 自动"
-
-msgid "Auto generate socket path"
-msgstr "自动生成套接字路径"
-
-msgid "UNIX Socket - Manual"
-msgstr "UNIX 套接字 - 手动"
-
-msgid "Manually specify socket path"
-msgstr "手动指定套接字路径"
 
 msgid "QEMU Controller Devices"
 msgstr "QEMU 控制器设备"

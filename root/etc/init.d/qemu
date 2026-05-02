@@ -306,76 +306,6 @@ build_storage_config() {
 	echo "$cmd"
 }
 
-
-
-
-# 校验 channel 配置
-validate_channel_config() {
-	local vm_ref=$1
-	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	
-	local channels=$(uci show qemu | grep -E "@channel_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for channel_ref in $channels; do
-		local path=$(uci_get_by_name "$channel_ref" "path" "")
-		local channel=$(uci_get_by_name "$channel_ref" "channel" "")
-		local channel_type=$(echo "$channel_ref" | sed 's/channel_\([a-z_]*\).*/\1/')
-		
-		if [ "$channel_type" = "file" ] || [ "$channel_type" = "unix_manual" ]; then
-			if [ -z "$path" ]; then
-				logger -t qemu "Error: Path is required for channel device type $channel_type"
-				echo "Error: Path is required for channel device type $channel_type" >&2
-				return 1
-			fi
-		elif [ "$channel_type" = "spiceport" ]; then
-			if [ -z "$channel" ]; then
-				logger -t qemu "Error: Channel is required for spiceport device type"
-				echo "Error: Channel is required for spiceport device type" >&2
-				return 1
-			fi
-		fi
-	done
-	
-	return 0
-}
-
-# 解析 channel 配置
-build_channel_config() {
-	local vm_ref=$1
-	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	local cmd=""
-	local channel_index=0
-	
-	local channels=$(uci show qemu | grep -E "channel_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for channel_ref in $channels; do
-		local name=$(uci_get_by_name "$channel_ref" "name" "com.redhat.spice.0")
-		local path=$(uci_get_by_name "$channel_ref" "path" "")
-		local channel=$(uci_get_by_name "$channel_ref" "channel" "")
-		
-		local channel_param="-chardev"
-		local channel_type=$(echo "$channel_ref" | sed 's/^@\?channel_\([a-z_]*\).*/\1/')
-		
-		if [ "$channel_type" = "file" ]; then
-			channel_param="$channel_param file,path=\"$path\",id=channel$channel_index"
-		elif [ "$channel_type" = "pty" ]; then
-			channel_param="$channel_param pty,id=channel$channel_index"
-		elif [ "$channel_type" = "spicevmc" ]; then
-			channel_param="$channel_param spicevmc,id=channel$channel_index,name=\"$name\""
-		elif [ "$channel_type" = "spiceport" ]; then
-			channel_param="$channel_param spiceport,id=channel$channel_index,channel=\"$channel\""
-		elif [ "$channel_type" = "unix_auto" ]; then
-			local socket_path="/var/run/qemu-${vm_name}-channel${channel_index}.sock"
-			channel_param="$channel_param unix,path=\"$socket_path\",server,nowait,id=channel$channel_index"
-		elif [ "$channel_type" = "unix_manual" ]; then
-			channel_param="$channel_param unix,path=\"$path\",server,nowait,id=channel$channel_index"
-		fi
-		
-		cmd="$cmd $channel_param -device virtserialport,chardev=channel$channel_index,name=\"$name\""
-		channel_index=$((channel_index + 1))
-	done
-	
-	echo "$cmd"
-}
-
 # 校验 controller 配置
 validate_controller_config() {
 	local vm_ref=$1
@@ -432,14 +362,46 @@ validate_host_dev_config() {
 		done
 	
 	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for host_ref in $pci_hosts; do
-		local host=$(uci_get_by_name "$host_ref" "host" "")
-		if [ -z "$host" ]; then
-			logger -t qemu "Error: PCI host device is required"
-			echo "Error: PCI host device is required" >&2
+	if [ -n "$pci_hosts" ]; then
+		# 检查 PCI 直通设备是否配置了 host
+		for host_ref in $pci_hosts; do
+			local host=$(uci_get_by_name "$host_ref" "host" "")
+			if [ -z "$host" ]; then
+				logger -t qemu "Error: PCI host device is required"
+				echo "Error: PCI host device is required" >&2
+				return 1
+			fi
+		done
+
+		# 检查 vfio 和 vfio_pci 驱动是否加载
+		if ! lsmod | grep -q "^vfio "; then
+			logger -t qemu "Error: vfio driver not loaded"
+			echo "Error: vfio driver not loaded" >&2
 			return 1
 		fi
-		done
+
+		if ! lsmod | grep -q "^vfio_pci "; then
+			logger -t qemu "Error: vfio_pci driver not loaded"
+			echo "Error: vfio_pci driver not loaded" >&2
+			return 1
+		fi
+
+		# 检查内核命令行参数
+		local cmdline=$(cat /proc/cmdline)
+		if ! echo "$cmdline" | grep -q "intel_iommu=on"; then
+			logger -t qemu "Error: intel_iommu=on not found in /proc/cmdline"
+			echo "Error: intel_iommu=on not found in /proc/cmdline" >&2
+			return 1
+		fi
+
+		if ! echo "$cmdline" | grep -q "iommu=pt"; then
+			logger -t qemu "Error: iommu=pt not found in /proc/cmdline"
+			echo "Error: iommu=pt not found in /proc/cmdline" >&2
+			return 1
+		fi
+
+		logger -t qemu "PCI passthrough pre-checks passed"
+	fi
 	
 	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $mdev_hosts; do
@@ -496,6 +458,30 @@ build_host_dev_config() {
 	for host_ref in $pci_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -n "$host" ]; then
+			local pci_path="/sys/bus/pci/devices/$host"
+			local driver_path="$pci_path/driver"
+
+			# 如果设备有绑定的驱动，先解绑
+			if [ -e "$driver_path/unbind" ]; then
+				logger -t qemu "Unbinding PCI device $host from current driver"
+				echo "$host" > "$driver_path/unbind" 2>/dev/null
+			fi
+
+			# 添加设备 ID 到 vfio-pci
+			local vfio_pci_path="/sys/bus/pci/drivers/vfio-pci"
+			if [ -e "$vfio_pci_path/new_id" ] && [ -e "$pci_path/vendor" ] && [ -e "$pci_path/device" ]; then
+				local vendor=$(cat "$pci_path/vendor" | cut -d'x' -f2)
+				local device=$(cat "$pci_path/device" | cut -d'x' -f2)
+				logger -t qemu "Adding PCI device ID $vendor:$device to vfio-pci"
+				echo "$vendor $device" > "$vfio_pci_path/new_id" 2>/dev/null
+			fi
+
+			# 绑定到 vfio-pci 驱动
+			if [ -e "$vfio_pci_path/bind" ]; then
+				logger -t qemu "Binding PCI device $host to vfio-pci"
+				echo "$host" > "$vfio_pci_path/bind" 2>/dev/null
+			fi
+
 			cmd="$cmd -device vfio-pci,host=$host,id=pcipassthrough$pci_index"
 		fi
 		pci_index=$((pci_index + 1))
@@ -540,60 +526,58 @@ build_host_dev_config() {
 	echo "$cmd"
 }
 
-# 校验 interface 配置
-validate_interface_config() {
-	local vm_ref=$1
-	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	
-	local interfaces=$(uci show qemu | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for interface_ref in $interfaces; do
-		local path=$(uci_get_by_name "$interface_ref" "path" "")
-		local interface_type=$(echo "$interface_ref" | sed 's/.*interface_//' | sed 's/\[.*\]//')
-		
-		if [ "$interface_type" = "file" ] || [ "$interface_type" = "unix" ]; then
-			if [ -z "$path" ]; then
-				logger -t qemu "Error: Path is required for interface type $interface_type"
-				echo "Error: Path is required for interface type $interface_type" >&2
-				return 1
-			fi
-		fi
-	done
-	
-	return 0
-}
-
 # 解析 interface 配置
 build_interface_config() {
 	local vm_ref=$1
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
-	local serial_index=0
-	local parallel_index=0
 	
 	local interfaces=$(uci show qemu | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for interface_ref in $interfaces; do
-		local path=$(uci_get_by_name "$interface_ref" "path" "")
-		local iface_type=$(uci_get_by_name "$interface_ref" "type" "serial")
-		local interface_subtype=$(echo "$interface_ref" | sed 's/.*interface_//' | sed 's/\[.*\]//')
-		
-		if [ "$iface_type" = "serial" ]; then
+		local path=$(uci_get_by_section "$interface_ref" "path" "")
+		local iface_type=$(uci_get_by_section "$interface_ref" "type" "serial")
+		local interface_subtype=$(echo "$interface_ref" | sed 's/^@\?interface_//' | sed 's/\[.*\]//')
+				
+		# --------------------------
+		# 正确的 virtio console 生成
+		# --------------------------
+		if [ "$iface_type" = "console" ]; then
+			# 必须先加总线
+			cmd="$cmd -device virtio-serial-pci"
+
 			if [ "$interface_subtype" = "file" ]; then
-				cmd="$cmd -serial file:\"$path\""
+				cmd="$cmd -chardev file,id=console,path=$path"
+			elif [ "$interface_subtype" = "pty" ]; then
+				cmd="$cmd -chardev pty,id=console"
+			elif [ "$interface_subtype" = "unix" ]; then
+				cmd="$cmd -chardev socket,id=console,path=$path,server=on,wait=off"
+			fi
+			# 挂载到 virtconsole
+			cmd="$cmd -device virtconsole,chardev=console"
+
+		# --------------------------
+		# 串口 serial
+		# --------------------------
+		elif [ "$iface_type" = "serial" ]; then
+			if [ "$interface_subtype" = "file" ]; then
+				cmd="$cmd -serial file:$path"
 			elif [ "$interface_subtype" = "pty" ]; then
 				cmd="$cmd -serial pty"
 			elif [ "$interface_subtype" = "unix" ]; then
-				cmd="$cmd -serial unix:\"$path\",server,nowait"
+				cmd="$cmd -serial unix:$path,server=on,wait=off"
 			fi
-			serial_index=$((serial_index + 1))
+
+		# --------------------------
+		# 并口 parallel
+		# --------------------------
 		elif [ "$iface_type" = "parallel" ]; then
 			if [ "$interface_subtype" = "file" ]; then
-				cmd="$cmd -parallel file:\"$path\""
+				cmd="$cmd -parallel file:$path"
 			elif [ "$interface_subtype" = "pty" ]; then
 				cmd="$cmd -parallel pty"
 			elif [ "$interface_subtype" = "unix" ]; then
-				cmd="$cmd -parallel unix:\"$path\",server,nowait"
+				cmd="$cmd -parallel unix:$path,server=on,wait=off"
 			fi
-			parallel_index=$((parallel_index + 1))
 		fi
 	done
 	
@@ -929,7 +913,6 @@ build_qemu_command() {
 	cmd="$cmd $(build_video_config "$vm_ref")"
 	cmd="$cmd $(build_network_config "$vm_ref")"
 	cmd="$cmd $(build_input_config "$vm_ref")"
-	cmd="$cmd $(build_channel_config "$vm_ref")"
 	cmd="$cmd $(build_host_dev_config "$vm_ref")"
 	cmd="$cmd $(build_interface_config "$vm_ref")"
 	cmd="$cmd $(build_sound_config "$vm_ref")"
@@ -958,21 +941,11 @@ prepare_qemu_command() {
 		return 1
 	fi
 	
-	# 校验channel配置
-	if ! validate_channel_config "$vm_ref"; then
-		return 1
-	fi
-	
 	# # 校验host配置
 	if ! validate_host_dev_config "$vm_ref"; then
 		return 1
 	fi
-	
-	# 校验interface配置
-	if ! validate_interface_config "$vm_ref"; then
-		return 1
-	fi
-	
+		
 	# 构建QEMU命令
 	return 0
 }
@@ -1099,6 +1072,22 @@ stop_vm() {
 		rm -f "$qmpfile"
 		logger -t qemu "Removed QMP socket file: $qmpfile"
 	fi
+
+	# 解绑 PCI 直通设备
+	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
+	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	for host_ref in $pci_hosts; do
+		local host=$(uci_get_by_name "$host_ref" "host" "")
+		if [ -n "$host" ]; then
+			local pci_path="/sys/bus/pci/devices/$host"
+			local driver_path="$pci_path/driver"
+
+			if [ -e "$driver_path/unbind" ]; then
+				logger -t qemu "Unbinding PCI device $host from vfio-pci for host recovery"
+				echo "$host" > "$driver_path/unbind" 2>/dev/null
+			fi
+		fi
+	done
 
 	logger -t qemu "VM $name stopped successfully"
 }
