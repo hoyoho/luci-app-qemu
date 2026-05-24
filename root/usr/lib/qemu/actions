@@ -1,0 +1,736 @@
+#!/bin/sh
+
+LOGFILE="/var/log/qemu.log"
+
+qemu_log() {
+	echo "$(date '+%Y-%m-%d %H:%M:%S') qemu: $*" >> "$LOGFILE"
+}
+
+# ============================================================================
+# Disk Operations
+# ============================================================================
+
+create_disk_image() {
+	local format="$1"
+	local path="$2"
+	local size="$3"
+	qemu_log "Creating disk image: $path ($format, ${size}G)"
+	qemu-img create -f "$format" "$path" "${size}G"
+}
+
+create_disk_image_bg() {
+	local format="$1"
+	local path="$2"
+	local size="$3"
+	local pidfile="/var/run/qemu-diskcreate.$$"
+	qemu_log "Creating disk image (background): $path ($format, ${size}G)"
+	(qemu-img create -f "$format" "$path" "${size}G" >/dev/null 2>&1; rm -f "$pidfile") &
+	echo $! > "$pidfile"
+}
+
+disk_file_exists() {
+	local path="$1"
+	[ -f "$path" ]
+}
+
+# ============================================================================
+# File Operations
+# ============================================================================
+
+delete_files() {
+	for f in "$@"; do
+		if [ -f "$f" ]; then
+			qemu_log "Deleting file: $f"
+			rm -f "$f"
+		fi
+	done
+}
+
+# ============================================================================
+# UEFI Firmware Operations
+# ============================================================================
+
+setup_uefi_firmware() {
+	local vm_name="$1"
+	local bios="$2"
+	local storage_path="$3"
+
+	local vars="${bios/CODE/VARS}"
+	local bios_file="${storage_path}/${vm_name}_code.fd"
+	local vars_file="${storage_path}/${vm_name}_vars.fd"
+
+	if [ ! -f "$vars" ]; then
+		qemu_log "Error: UEFI firmware file not found: $vars"
+		return 1
+	fi
+
+	if ! cmp -s "$bios" "$bios_file"; then
+		cp -f "$bios" "$bios_file"
+		cp -f "$vars" "$vars_file"
+	fi
+	if [ ! -f "$vars_file" ]; then
+		cp -f "$vars" "$vars_file"
+	fi
+
+	if [ -f "$bios_file" ]; then
+		qemu_log "UEFI firmware file created successfully"
+	else
+		qemu_log "Error: Failed to create $bios_file"
+		return 1
+	fi
+	if [ -f "$vars_file" ]; then
+		qemu_log "UEFI variables file created successfully"
+	else
+		qemu_log "Error: Failed to create $vars_file"
+		return 1
+	fi
+	return 0
+}
+
+# ============================================================================
+# PCI Passthrough Operations
+# ============================================================================
+
+pci_bind() {
+	local host="$1"
+	local pci_path="/sys/bus/pci/devices/$host"
+	local driver_path="$pci_path/driver"
+
+	if [ -e "$driver_path/unbind" ]; then
+		qemu_log "Unbinding PCI device $host from current driver"
+		echo "$host" > "$driver_path/unbind" 2>/dev/null
+	fi
+
+	local vfio_pci_path="/sys/bus/pci/drivers/vfio-pci"
+	if [ -e "$vfio_pci_path/new_id" ] && [ -e "$pci_path/vendor" ] && [ -e "$pci_path/device" ]; then
+		local vendor=$(cat "$pci_path/vendor" | cut -d'x' -f2)
+		local device=$(cat "$pci_path/device" | cut -d'x' -f2)
+		qemu_log "Adding PCI device ID $vendor:$device to vfio-pci"
+		echo "$vendor $device" > "$vfio_pci_path/new_id" 2>/dev/null
+	fi
+
+	if [ -e "$vfio_pci_path/bind" ]; then
+		qemu_log "Binding PCI device $host to vfio-pci"
+		echo "$host" > "$vfio_pci_path/bind" 2>/dev/null
+	fi
+}
+
+pci_unbind() {
+	local host="$1"
+	local pci_path="/sys/bus/pci/devices/$host"
+	local driver_path="$pci_path/driver"
+
+	if [ -e "$driver_path/unbind" ]; then
+		qemu_log "Unbinding PCI device $host from driver for host recovery"
+		echo "$host" > "$driver_path/unbind" 2>/dev/null
+	fi
+}
+
+# ============================================================================
+# Runtime Cleanup
+# ============================================================================
+
+cleanup_runtime_files() {
+	local name="$1"
+	local pidfile="/var/run/qemu-${name}.pid"
+	local qmpfile="/var/run/qemu-${name}-qmp.sock"
+
+	if [ -f "$pidfile" ]; then
+		rm -f "$pidfile"
+		qemu_log "Removed old pid file: $pidfile"
+	fi
+
+	if [ -S "$qmpfile" ]; then
+		rm -f "$qmpfile"
+		qemu_log "Removed old QMP socket file: $qmpfile"
+	fi
+}
+
+# ============================================================================
+# VNC Password via QMP
+# ============================================================================
+
+set_vnc_password() {
+	local vm_name="$1"
+	local password="$2"
+	local qmp_socket="/var/run/qemu-${vm_name}-qmp.sock"
+
+	local waited=0
+	while [ $waited -lt 50 ]; do
+		if [ -S "$qmp_socket" ]; then
+			break
+		fi
+		sleep 0.1
+		waited=$((waited + 1))
+	done
+
+	if [ ! -S "$qmp_socket" ]; then
+		qemu_log "Warning: QMP socket not ready for VM $vm_name, cannot set VNC password"
+		return 1
+	fi
+
+	socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<QMPEOF
+{"execute":"qmp_capabilities"}
+{"execute":"change","arguments":{"device":"vnc","target":"password","arg":"$password"}}
+QMPEOF
+	qemu_log "VNC password set for VM $vm_name"
+}
+
+qmp_shutdown_vm() {
+	local vm_name="$1"
+	local qmp_socket="/var/run/qemu-${vm_name}-qmp.sock"
+
+	if [ ! -S "$qmp_socket" ]; then
+		qemu_log "No QMP socket found for VM $vm_name"
+		return 1
+	fi
+
+	qemu_log "Sending system_powerdown to VM $vm_name"
+	socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"system_powerdown"}
+QMPEOF
+}
+
+# ============================================================================
+# VM Status
+# ============================================================================
+
+find_vm_pid() {
+	local name="$1"
+	ps | grep -E "qemu-system" | grep -v grep | grep -E '[[:space:]]-name[[:space:]]+"?'"${name}"'"?([[:space:]]|$)' | awk '{print $1}'
+}
+
+is_vm_running() {
+	local name="$1"
+	local pid=$(find_vm_pid "$name")
+	[ -n "$pid" ]
+}
+
+# ============================================================================
+# Freeze / Resume
+# ============================================================================
+
+freeze_vm() {
+	local vm_name="$1"
+	local state_file="$2"
+	local qmp_socket="/var/run/qemu-${vm_name}-qmp.sock"
+
+	if [ ! -S "$qmp_socket" ]; then
+		qemu_log "Error: QMP socket not found for VM $vm_name, cannot freeze"
+		return 1
+	fi
+
+	local pid=$(find_vm_pid "$vm_name")
+	if [ -z "$pid" ]; then
+		qemu_log "Error: VM $vm_name is not running, cannot freeze"
+		return 1
+	fi
+
+	qemu_log "Freezing VM $vm_name to $state_file"
+
+	socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"stop"}
+QMPEOF
+	qemu_log "VM $vm_name paused"
+
+	local migrate_output=$(socat -T3 - unix-connect:$qmp_socket 2>/dev/null <<QMPEOF
+{"execute":"qmp_capabilities"}
+{"execute":"migrate","arguments":{"uri":"exec:gzip -c > $state_file"}}
+QMPEOF
+)
+	if echo "$migrate_output" | grep -q '"error"'; then
+		local err_msg=$(echo "$migrate_output" | sed -n 's/.*"desc": *"\([^"]*\)".*/\1/p' | tail -1)
+		qemu_log "Error: Migration rejected for VM $vm_name: $err_msg"
+		socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"cont"}
+QMPEOF
+		return 1
+	fi
+	qemu_log "Migration to state file started for VM $vm_name"
+
+	local waited=0
+	while [ $waited -lt 600 ]; do
+		local result=$(socat -T2 - unix-connect:$qmp_socket 2>/dev/null <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"query-migrate"}
+QMPEOF
+)
+		local status=$(echo "$result" | sed -n 's/.*"status": *"\([^"]*\)".*/\1/p' | head -1)
+		if echo "$result" | grep -q '"blocked-reasons"'; then
+			local blocked=$(echo "$result" | grep -o '"blocked-reasons":[^]]*\]' | head -1)
+			qemu_log "Error: Migration blocked for VM $vm_name: $blocked"
+			socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"cont"}
+QMPEOF
+			return 1
+		fi
+		case "$status" in
+			completed)
+				qemu_log "Migration completed for VM $vm_name"
+				break
+				;;
+			failed|cancelled)
+				qemu_log "Error: Migration failed for VM $vm_name (status: $status)"
+				socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"cont"}
+QMPEOF
+				return 1
+				;;
+		esac
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if [ "$waited" -ge 600 ]; then
+		qemu_log "Error: Migration timed out for VM $vm_name"
+		socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"cont"}
+QMPEOF
+		return 1
+	fi
+
+	sleep 1
+
+	stop_vm_process "$vm_name" "$pid"
+	qemu_log "VM $vm_name frozen successfully"
+}
+
+stop_vm_process() {
+	local vm_name="$1"
+	local pid="$2"
+
+	if [ -z "$pid" ]; then
+		pid=$(find_vm_pid "$vm_name")
+	fi
+
+	if [ -n "$pid" ]; then
+		kill $pid 2>/dev/null
+		sleep 1
+		pid=$(find_vm_pid "$vm_name")
+		if [ -n "$pid" ]; then
+			kill -9 $pid 2>/dev/null
+		fi
+	fi
+}
+
+resume_incoming_vm() {
+	local vm_name="$1"
+	local state_file="$2"
+	local qmp_socket="/var/run/qemu-${vm_name}-qmp.sock"
+
+	if [ ! -f "$state_file" ]; then
+		qemu_log "Error: State file not found: $state_file"
+		return 1
+	fi
+
+	local waited=0
+	while [ $waited -lt 60 ]; do
+		if [ -S "$qmp_socket" ]; then
+			break
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if [ ! -S "$qmp_socket" ]; then
+		qemu_log "Error: QMP socket not ready for VM $vm_name after 60s, cannot resume"
+		return 1
+	fi
+
+	qemu_log "Resuming VM $vm_name from $state_file"
+	local resp=$(socat -T3 - unix-connect:$qmp_socket 2>/dev/null <<QMPEOF
+{"execute":"qmp_capabilities"}
+{"execute":"migrate-incoming","arguments":{"uri":"exec:gzip -dc $state_file"}}
+QMPEOF
+)
+	if echo "$resp" | grep -q '"error"'; then
+		local err_msg=$(echo "$resp" | sed -n 's/.*"desc": *"\([^"]*\)".*/\1/p' | tail -1)
+		qemu_log "Error: migrate-incoming rejected for VM $vm_name: $err_msg"
+		return 1
+	fi
+	qemu_log "Incoming migration started for VM $vm_name"
+
+	waited=0
+	while [ $waited -lt 120 ]; do
+		local result=$(socat -T2 - unix-connect:$qmp_socket 2>/dev/null <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"query-migrate"}
+QMPEOF
+)
+		local status=$(echo "$result" | sed -n 's/.*"status": *"\([^"]*\)".*/\1/p' | head -1)
+		case "$status" in
+			completed)
+				qemu_log "Incoming migration completed for VM $vm_name"
+				break
+				;;
+			failed|cancelled)
+				qemu_log "Error: Incoming migration failed for VM $vm_name (status: $status)"
+				return 1
+				;;
+		esac
+		sleep 1
+		waited=$((waited + 1))
+	done
+
+	if [ "$waited" -ge 120 ]; then
+		qemu_log "Error: Incoming migration timed out for VM $vm_name"
+		return 1
+	fi
+
+	socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<'QMPEOF'
+{"execute":"qmp_capabilities"}
+{"execute":"cont"}
+QMPEOF
+	qemu_log "VM $vm_name resumed from freeze"
+
+	rm -f "$state_file"
+	qemu_log "State file removed: $state_file"
+}
+
+# ============================================================================
+# Disk Copy
+# ============================================================================
+
+copy_disk() {
+	local src="$1"
+	local dst="$2"
+	qemu_log "Copying disk: $src -> $dst"
+	cp "$src" "$dst"
+}
+
+copy_disk_bg() {
+	local src="$1"
+	local dst="$2"
+	qemu_log "Copying disk: $src -> $dst"
+	cp "$src" "$dst" >/dev/null 2>&1
+}
+
+# ============================================================================
+# Storage Directory
+# ============================================================================
+
+ensure_storage_dir() {
+	local path="$1"
+	if [ ! -d "$path" ]; then
+		qemu_log "Creating default storage directory: $path"
+		mkdir -p "$path"
+		if [ $? -ne 0 ]; then
+			qemu_log "Error: Failed to create storage directory: $path"
+			return 1
+		fi
+	fi
+}
+
+# ============================================================================
+# VM Clone
+# ============================================================================
+
+_vm_name_exists() {
+	local name="$1"
+	for s in $(uci show qemu 2>/dev/null | sed -n 's/^\(.*\)=vm$/\1/p'); do
+		local n=$(uci get "${s}.name" 2>/dev/null)
+		[ "$n" = "$name" ] && return 0
+	done
+	return 1
+}
+
+_uci_copy_section_props() {
+	local src="$1"
+	local dst="$2"
+	shift 2
+	local skip_keys="$*"
+
+	local tmpfile=$(mktemp /tmp/uci_copy_props.XXXXXX)
+	uci show "$src" 2>/dev/null > "$tmpfile"
+	while IFS='=' read -r fullkey value; do
+		[ -z "$fullkey" ] && continue
+		local key="${fullkey##*.}"
+		case "$key" in
+			.type|.name|.index|.anonymous|cfg*|@*) continue ;;
+		esac
+		local skip=0
+		for sk in $skip_keys; do
+			[ "$key" = "$sk" ] && { skip=1; break; }
+		done
+		[ "$skip" -eq 1 ] && continue
+		value="${value#\'}"
+		value="${value%\'}"
+		uci set "${dst}.${key}=${value}" 2>/dev/null
+	done < "$tmpfile"
+	rm -f "$tmpfile"
+}
+
+_clone_path() {
+	local path="$1"
+	local old="$2"
+	local new="$3"
+	local result base dir
+
+	local old_esc=$(echo "$old" | sed 's/[.[\*^$()+?{|]/\\&/g')
+
+	result=$(echo "$path" | sed "s|/\(${old_esc}\)\([/._-]\)|/${new}\2|g")
+	[ "$result" != "$path" ] && { echo "$result"; return; }
+
+	result=$(echo "$path" | sed "s|/${old_esc}$|/${new}|")
+	[ "$result" != "$path" ] && { echo "$result"; return; }
+
+	base="${path##*/}"
+	dir="${path%/*}"
+	[ "$dir" = "$path" ] && dir=""
+	[ -n "$dir" ] && dir="${dir}/"
+
+	result=$(echo "$base" | sed "s|^\(${old_esc}\)\([._-]\)|${new}\2|")
+	[ "$result" != "$base" ] && { echo "${dir}${result}"; return; }
+
+	[ "$base" = "$old" ] && { echo "${dir}${new}"; return; }
+
+	case "$base" in
+		*.*) echo "${dir}${base%.*}-clone.${base##*.}" ;;
+		*) echo "${path}-clone" ;;
+	esac
+}
+
+_clone_copy_bg() {
+	local new_section="$1"
+	local old_section="$2"
+	local pair_list="$3"
+	local old_name="$4"
+	local new_name="$5"
+
+	local tmpfile=$(mktemp /tmp/qemu_clone_pairs.XXXXXX)
+	printf '%s\n' "$pair_list" | sed '/^$/d' > "$tmpfile"
+
+	(
+		local failed=0
+		while IFS='|' read -r src dst; do
+			[ -z "$src" ] && continue
+			qemu_log "clone_vm: copying $src -> $dst"
+			if ! cp "$src" "$dst" 2>/dev/null; then
+				qemu_log "clone_vm: failed to copy $src -> $dst"
+				failed=1
+			fi
+		done < "$tmpfile"
+		rm -f "$tmpfile"
+		uci set "qemu.${new_section}.cloning=0"
+		uci set "qemu.${old_section}.cloning=0"
+		if [ "$failed" -eq 0 ]; then
+			uci set "qemu.${new_section}.clone_source=${old_name}"
+			uci set "qemu.${new_section}.clone_time=$(date '+%Y-%m-%d %H:%M:%S')"
+			qemu_log "clone_vm: $old_name -> $new_name completed"
+		else
+			uci set "qemu.${new_section}.clone_failed=1"
+			qemu_log "clone_vm: $old_name -> $new_name completed with errors"
+		fi
+		uci commit qemu
+		rm -f /var/run/qemu-clone-${new_name}.pid
+		rmdir /tmp/qemu_clone_lock_${old_name} 2>/dev/null
+	) </dev/null >/dev/null 2>&1 &
+	echo $! > /var/run/qemu-clone-${new_name}.pid
+}
+
+clone_vm() {
+	local old_section="$1"
+	local new_name="$2"
+
+	local old_name storage_path new_section
+
+	old_name=$(uci get "qemu.${old_section}.name" 2>/dev/null)
+	[ -z "$old_name" ] && { qemu_log "clone_vm: old VM section $old_section not found"; return 1; }
+
+	storage_path=$(uci get "qemu.@global[0].storage_path" 2>/dev/null || echo "/storage/qemu")
+
+	if _vm_name_exists "$new_name"; then
+		qemu_log "clone_vm: VM name '$new_name' already exists"
+		return 2
+	fi
+
+	# Atomic lock to prevent concurrent clones
+	if ! mkdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null; then
+		qemu_log "clone_vm: clone already in progress for $old_name"
+		return 4
+	fi
+
+	qemu_log "Cloning VM: $old_name -> $new_name"
+
+	new_section=$(uci add qemu vm)
+	[ -z "$new_section" ] && { qemu_log "clone_vm: failed to add new VM section"; rmdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null; return 1; }
+	uci set "qemu.${new_section}.name=${new_name}"
+	uci set "qemu.${new_section}.autostart=0"
+
+	_uci_copy_section_props "qemu.${old_section}" "qemu.${new_section}" "name autostart cloning freezing frozen clone_source clone_time"
+
+	local copy_pairs=""
+
+	local sub_pattern="\.vm='${old_name}'$"
+	local sub_sections=$(uci show qemu 2>/dev/null | grep "$sub_pattern" | sed 's/\.vm=.*//' | sort -u)
+	for sub_sec in $sub_sections; do
+		local sub_type=$(uci get "$sub_sec" 2>/dev/null)
+		[ -z "$sub_type" ] && continue
+		[ "$sub_type" = "vm" ] && continue
+		[ "$sub_type" = "global" ] && continue
+
+		local new_sub=$(uci add qemu "$sub_type")
+		[ -z "$new_sub" ] && { qemu_log "clone_vm: failed to add $sub_type section"; rmdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null; return 1; }
+
+		_uci_copy_section_props "$sub_sec" "qemu.${new_sub}" "vm file"
+		uci set "qemu.${new_sub}.vm=${new_name}"
+
+		case "$sub_type" in
+			net_bridge|net_user|net_tap|net_l2tpv3|net_socket)
+				local old_mac=$(uci get "qemu.${new_sub}.mac" 2>/dev/null)
+				if [ -n "$old_mac" ] && [ "$old_mac" != "auto" ]; then
+					local new_mac=$(printf '52:54:00:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
+					uci set "qemu.${new_sub}.mac=${new_mac}"
+				fi
+				;;
+		esac
+
+		local old_file=$(uci get "${sub_sec}.file" 2>/dev/null)
+		if [ -n "$old_file" ]; then
+			if [ "$sub_type" = "cdrom" ]; then
+				uci set "qemu.${new_sub}.file=${old_file}"
+			else
+				local new_file=$(_clone_path "$old_file" "$old_name" "$new_name")
+				uci set "qemu.${new_sub}.file=${new_file}"
+				if [ -f "$old_file" ]; then
+					copy_pairs="${copy_pairs}${old_file}|${new_file}
+"
+				fi
+			fi
+		fi
+
+		if [ "$sub_type" = "interface_file" ]; then
+			local old_path=$(uci get "${sub_sec}.path" 2>/dev/null)
+			if [ -n "$old_path" ]; then
+				local new_path=$(_clone_path "$old_path" "$old_name" "$new_name")
+				uci set "qemu.${new_sub}.path=${new_path}"
+			fi
+		fi
+	done
+
+	if [ "$(uci get "qemu.${new_section}.uefi" 2>/dev/null)" = "1" ]; then
+		local uefi_code_src="${storage_path}/${old_name}_code.fd"
+		local uefi_vars_src="${storage_path}/${old_name}_vars.fd"
+		local uefi_code_dst="${storage_path}/${new_name}_code.fd"
+		local uefi_vars_dst="${storage_path}/${new_name}_vars.fd"
+
+		[ -f "$uefi_code_src" ] && copy_pairs="${copy_pairs}${uefi_code_src}|${uefi_code_dst}
+"
+		[ -f "$uefi_vars_src" ] && copy_pairs="${copy_pairs}${uefi_vars_src}|${uefi_vars_dst}
+"
+	fi
+
+	if [ -n "$copy_pairs" ]; then
+		local total_size=0
+		while IFS='|' read -r src dst; do
+			[ -z "$src" ] && continue
+			[ -f "$src" ] || continue
+			local sz=$(stat -c%s "$src" 2>/dev/null || echo 0)
+			total_size=$((total_size + sz))
+		done <<PAIRS
+$copy_pairs
+PAIRS
+
+		local avail=$(df -k "$storage_path" 2>/dev/null | tail -1 | awk '{print $4}')
+		local needed_kb=$(( (total_size + 1023) / 1024 ))
+		if [ -n "$avail" ] && [ "$needed_kb" -gt "$avail" ] 2>/dev/null; then
+			qemu_log "clone_vm: insufficient disk space: need ${needed_kb}KB, available ${avail}KB on $storage_path"
+			local sub_to_delete=$(uci show qemu 2>/dev/null | sed -n 's/^\(.*\)\.vm='"'"'${new_name}'"'"'$/\1/p')
+			for sub_sec in $sub_to_delete; do
+				uci delete "$sub_sec" 2>/dev/null
+			done
+			uci delete "qemu.${new_section}" 2>/dev/null
+			uci commit qemu
+			rmdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null
+			return 3
+		fi
+
+		uci set "qemu.${new_section}.cloning=1"
+		uci set "qemu.${old_section}.cloning=1"
+		uci commit qemu
+		_clone_copy_bg "$new_section" "$old_section" "$copy_pairs" "$old_name" "$new_name"
+	else
+		uci set "qemu.${new_section}.cloning=0"
+		uci commit qemu
+		rmdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null
+	fi
+
+	echo "$new_section"
+	return 0
+}
+
+# ============================================================================
+# CLI Interface (for external calls from Lua controller)
+# ============================================================================
+if [ "$1" != "" ]; then
+	case "$1" in
+		create_disk)
+			create_disk_image "$2" "$3" "$4"
+			;;
+		create_disk_bg)
+			create_disk_image_bg "$2" "$3" "$4"
+			;;
+		disk_file_exists)
+			disk_file_exists "$2"
+			exit $?
+			;;
+		delete_files)
+			shift
+			delete_files "$@"
+			;;
+		setup_uefi)
+			setup_uefi_firmware "$2" "$3" "$4"
+			exit $?
+			;;
+		pci_bind)
+			pci_bind "$2"
+			;;
+		pci_unbind)
+			pci_unbind "$2"
+			;;
+		cleanup_runtime)
+			cleanup_runtime_files "$2"
+			;;
+		set_vnc_password)
+			set_vnc_password "$2" "$3"
+			;;
+		qmp_shutdown)
+			qmp_shutdown_vm "$2"
+			;;
+		find_vm_pid)
+			find_vm_pid "$2"
+			;;
+		is_vm_running)
+			is_vm_running "$2"
+			exit $?
+			;;
+		ensure_storage_dir)
+			ensure_storage_dir "$2"
+			;;
+		freeze_vm)
+			freeze_vm "$2" "$3"
+			exit $?
+			;;
+		resume_incoming)
+			resume_incoming_vm "$2" "$3"
+			exit $?
+			;;
+		copy_disk)
+			copy_disk "$2" "$3"
+			exit $?
+			;;
+		copy_disk_bg)
+			copy_disk_bg "$2" "$3"
+			;;
+		clone_vm)
+			clone_vm "$2" "$3"
+			exit $?
+			;;
+	esac
+fi

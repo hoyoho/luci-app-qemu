@@ -35,8 +35,8 @@ end
 -- 显示端口列
 port_display = s_display:option(DummyValue, "port", translate("Port"))
 function port_display.cfgvalue(self, section)
-    local port_mannual = self.map:get(section, "port_mannual")
-    if port_mannual ~= "1" then
+    local port_manual = self.map:get(section, "port_manual")
+    if port_manual ~= "1" then
         return translate("Auto")
     end
     return self.map:get(section, "port") or "5900"

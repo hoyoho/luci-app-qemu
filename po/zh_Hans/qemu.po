@@ -72,8 +72,8 @@ msgstr "-- 选择 USB 设备 --"
 msgid "PCI Host Devices"
 msgstr "PCI 主机设备"
 
-msgid "PCI passthrough devices, requires adding 'intel_iommu=on iommu=pt' to /boot/grub/grub.cfg"
-msgstr "PCI 透传设备，需要在 /boot/grub/grub.cfg 中添加 'intel_iommu=on iommu=pt' 内核参数"
+msgid "PCI passthrough devices, requires adding 'intel_iommu=on iommu=pt' to kernel command line"
+msgstr "PCI 透传设备，需要在内核引导参数中添加 'intel_iommu=on iommu=pt'"
 
 msgid "PCI Device"
 msgstr "PCI 设备"
@@ -927,6 +927,135 @@ msgstr "QEMU 看门狗设备"
 msgid "Watchdog Devices"
 msgstr "看门狗设备"
 
+msgid "Operations"
+msgstr "更多操作"
+
+msgid "Clone"
+msgstr "克隆"
+
+msgid "Rename"
+msgstr "重命名"
+
+msgid "Freeze"
+msgstr "冻结"
+
+msgid "Resume"
+msgstr "恢复"
+
+msgid "Processing..."
+msgstr "正在处理..."
+
+msgid "Loading..."
+msgstr "加载中..."
+
+msgid "Failed to load."
+msgstr "加载失败。"
+
+msgid "Cloning in progress..."
+msgstr "正在克隆中..."
+
+msgid "Cloning VM... "
+msgstr "正在克隆虚拟机... "
+
+msgid "Freezing VM... "
+msgstr "正在冻结虚拟机... "
+
+msgid "Network error while checking clone status."
+msgstr "检查克隆状态时网络出错。"
+
+msgid "Network error while checking freeze status."
+msgstr "检查冻结状态时网络出错。"
+
+msgid "Clone timed out. No progress for 2 minutes. Please check the VM status manually."
+msgstr "克隆超时，已 2 分钟无进展，请手动检查虚拟机状态。"
+
+msgid "Clone timed out (20 min). Please check the VM status manually."
+msgstr "克隆超时（已达 20 分钟），请手动检查虚拟机状态。"
+
+msgid "Freeze timed out. No progress for 2 minutes. Please check the VM status manually."
+msgstr "冻结超时，已 2 分钟无进展，请手动检查虚拟机状态。"
+
+msgid "Freeze timed out (20 min). Please check the VM status manually."
+msgstr "冻结超时（已达 20 分钟），请手动检查虚拟机状态。"
+
+msgid "Freeze failed. VM stopped but no state file was created."
+msgstr "冻结失败，虚拟机已停止但未生成状态文件。"
+
+msgid "Freeze failed. The VM may not support migration (e.g. VFIO PCI passthrough devices)."
+msgstr "冻结失败，虚拟机可能不支持迁移（如存在 VFIO PCI 透传设备）。"
+
+msgid "Deleting VM:"
+msgstr "正在删除虚拟机："
+
+msgid "Cloning VM, this may take a moment..."
+msgstr "正在克隆虚拟机，可能需要一些时间..."
+
+msgid "Renaming VM..."
+msgstr "正在重命名虚拟机..."
+
+msgid "Freezing VM..."
+msgstr "正在冻结虚拟机..."
+
+msgid "Resuming VM..."
+msgstr "正在恢复虚拟机..."
+
+msgid "Clone Virtual Machine"
+msgstr "克隆虚拟机"
+
+msgid "Enter name for cloned VM"
+msgstr "请输入克隆后的虚拟机名称"
+
+msgid "Rename Virtual Machine"
+msgstr "重命名虚拟机"
+
+msgid "Enter new name for VM"
+msgstr "请输入虚拟机的新名称"
+
+msgid "Name available"
+msgstr "名称可用"
+
+msgid "Name already exists"
+msgstr "名称已存在"
+
+msgid "Clone completed with errors. Some files may not have been copied correctly. Check the new VM configuration."
+msgstr "克隆已完成但出现错误，部分文件可能未正确复制，请检查新虚拟机配置。"
+
+msgid "Clone failed."
+msgstr "克隆失败。"
+
+msgid "A VM with this name already exists."
+msgstr "已存在同名虚拟机。"
+
+msgid "Clone failed: insufficient disk space on target storage."
+msgstr "克隆失败：目标存储空间不足。"
+
+msgid "A clone operation is already in progress for this VM."
+msgstr "此虚拟机正在进行克隆操作。"
+
+msgid "Rename failed."
+msgstr "重命名失败。"
+
+msgid "Freeze failed."
+msgstr "冻结失败。"
+
+msgid "Resume failed."
+msgstr "恢复失败。"
+
+msgid "Server returned invalid response."
+msgstr "服务器返回了无效的响应。"
+
+msgid "Request failed."
+msgstr "请求失败。"
+
+msgid "Network error."
+msgstr "网络错误。"
+
+msgid "Freeze Virtual Machine"
+msgstr "冻结虚拟机"
+
+msgid "Freeze will save the VM state and stop it. You can resume later."
+msgstr "冻结将保存虚拟机状态并停止运行，稍后可恢复。"
+
 msgid "DIAG288"
 msgstr "DIAG288"
 
@@ -1343,3 +1472,72 @@ msgstr "停止"
 
 msgid "Reset"
 msgstr "复位"
+
+msgid "Audio Driver"
+msgstr "音频驱动"
+
+msgid "None (no audio output)"
+msgstr "无（无音频输出）"
+
+msgid "Delete Virtual Machine"
+msgstr "删除虚拟机"
+
+msgid "Loading associated items..."
+msgstr "正在加载关联项..."
+
+msgid "Configuration items to remove:"
+msgstr "要删除的配置项："
+
+msgid "Select All"
+msgstr "全选"
+
+msgid "Deselect All"
+msgstr "取消全选"
+
+msgid "Storage files to delete:"
+msgstr "要删除的存储文件："
+
+msgid "No associated configuration items found."
+msgstr "未找到关联的配置项。"
+
+msgid "No storage files found."
+msgstr "未找到存储文件。"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Deleting..."
+msgstr "正在删除..."
+
+msgid "Delete failed."
+msgstr "删除失败。"
+
+msgid "Failed to load VM info."
+msgstr "加载虚拟机信息失败。"
+
+msgid "Invalid response from server."
+msgstr "服务器返回无效响应。"
+
+msgid "Request failed."
+msgstr "请求失败。"
+
+msgid "Network error."
+msgstr "网络错误。"
+
+msgid "Delete request failed."
+msgstr "删除请求失败。"
+
+msgid "Are you sure you want to stop this VM? Unsaved data may be lost."
+msgstr "确定要停止此虚拟机吗？未保存的数据可能会丢失。"
+
+msgid "Are you sure you want to reset this VM? This will trigger a warm reboot."
+msgstr "确定要复位此虚拟机吗？这将触发热重启。"
+
+msgid "OK"
+msgstr "确定"
+
+msgid "Stop Virtual Machine"
+msgstr "停止虚拟机"
+
+msgid "Reset Virtual Machine"
+msgstr "复位虚拟机"

@@ -198,6 +198,93 @@ luci-app-qemu 是一个基于 LuCI 的 Web 界面，用于在 OpenWrt/LEDE 系�
 - 启动选项
 - 自动启动配置
 
+## 启用 ALSA 音频支持
+
+默认情况下，OpenWrt feed 中的 QEMU 包编译时未启用任何音频后端（`--audio-drv-list=''`）。这意味着在 luci-app-qemu 中配置的声卡设备（AC97、HDA ICH6、HDA ICH9）会静默丢弃所有音频数据。
+
+要通过 ALSA 实现真正的音频输出，需要从 OpenWrt SDK 重新编译 QEMU 包并启用 ALSA 支持。
+
+### 为何需要重新编译
+
+上游 QEMU 包明确禁用了所有音频后端：
+
+```makefile
+--audio-drv-list=''        # 不编译任何音频驱动
+--disable-alsa             # ALSA 已禁用
+--disable-oss              # OSS 已禁用
+--disable-pa               # PulseAudio 已禁用
+```
+
+这意味着即使你的路由器有正常工作的声卡且已加载 ALSA 驱动，QEMU 也无法使用它们。
+
+### 修改 QEMU 包 Makefile
+
+在 OpenWrt SDK 中找到 QEMU 包：
+
+```
+<sdk-root>/package/feeds/packages/qemu/Makefile
+```
+
+进行以下修改：
+
+**1. 添加 menuconfig 选项** — 在 `config QEMU_ZSTD` 附近添加：
+
+```makefile
+config QEMU_AUDIO_ALSA
+	bool "QEMU ALSA audio support"
+	default n
+```
+
+**2. 更新 configure 参数** — 找到 `--audio-drv-list` 和 `--disable-alsa` 所在行并替换：
+
+```makefile
+--audio-drv-list='$(if $(CONFIG_QEMU_AUDIO_ALSA),alsa,)' \
+--$(if $(CONFIG_QEMU_AUDIO_ALSA),enable,disable)-alsa \
+```
+
+其他音频相关行（`--disable-oss`、`--disable-pa`）保持不变。
+
+**3. 添加依赖** — 在 `qemu-target` 包块的 `DEPENDS` 中添加：
+
+```makefile
++QEMU_AUDIO_ALSA:alsa-lib \
+```
+
+**4. 注册配置符号** — 在 `PKG_CONFIG_DEPENDS` 中添加：
+
+```makefile
+CONFIG_QEMU_AUDIO_ALSA \
+```
+
+### 编译与安装
+
+```bash
+# 1. 进入 SDK 目录
+cd <sdk-root>
+
+# 2. 在 menuconfig 中启用选项
+make menuconfig
+# 导航到：Utilities → Virtualization → QEMU ALSA audio support → 启用
+
+# 3. 编译 QEMU 包
+make package/qemu/compile V=s
+
+# 4. 查找生成的包
+ls bin/packages/*/packages/qemu-*_*.ipk
+
+# 5. 复制到路由器并安装
+scp bin/packages/*/packages/qemu-*_*.ipk root@<路由器IP>:/tmp/
+ssh root@<路由器IP>
+opkg install /tmp/qemu-*.ipk --force-reinstall
+```
+
+重新安装 QEMU 包后，luci-app-qemu 中配置的声卡设备将通过路由器的 ALSA 声音系统输出音频。验证安装：
+
+```bash
+qemu-system-x86_64 -audiodev help
+# 现在应该能在可用音频驱动列表中看到 "alsa"
+```
+
 ## 故障排除
 
 ### 常见问题

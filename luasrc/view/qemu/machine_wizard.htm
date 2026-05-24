@@ -117,7 +117,7 @@ function validateForm() {
         <% if step == 5 then %>
         <input type="hidden" name="display" value="<%=vm_display%>">
         <input type="hidden" name="vnc_port" value="<%=vm_vnc_port%>">
-        <input type="hidden" name="vnc_port_mannual" value="<%=luci.http.formvalue('vnc_port_mannual') or '0'%>">
+        <input type="hidden" name="vnc_port_manual" value="<%=luci.http.formvalue('vnc_port_manual') or '0'%>">
         <input type="hidden" name="video_type" value="<%=vm_video_type%>">
         <% end %>
         
@@ -242,18 +242,19 @@ function validateForm() {
 
                 <div id="vnc_config_div" style="display: <%=vm_display == "vnc" and 'block' or 'none' %>">
                     <div class="cbi-value">
-                        <label class="cbi-value-title" for="vnc_port_mannual"><%:Manual Port%></label>
+                        <label class="cbi-value-title" for="vnc_port_manual"><%:Manual Port%></label>
                         <div class="cbi-value-field">
-                            <input type="checkbox" id="vnc_port_mannual" name="vnc_port_mannual" value="1" onchange="toggleVNCPortInput()" <%=luci.http.formvalue('vnc_port_mannual') == "1" and 'checked' or ''%>>
+                            <input type="checkbox" id="vnc_port_manual" name="vnc_port_manual" value="1" onchange="toggleVNCPortInput()" <%=luci.http.formvalue('vnc_port_manual') == "1" and 'checked' or ''%>>
                             <div class="cbi-value-description"><%:Check to specify a manual port, uncheck for auto port allocation.%></div>
                         </div>
                     </div>
 
-                    <div id="vnc_port_div" style="display: <%=luci.http.formvalue('vnc_port_mannual') == "1" and 'block' or 'none' %>">
+                    <div id="vnc_port_div" style="display: <%=luci.http.formvalue('vnc_port_manual') == "1" and 'block' or 'none' %>">
                         <div class="cbi-value">
                             <label class="cbi-value-title" for="vnc_port"><%:VNC Port%></label>
                             <div class="cbi-value-field">
-                                <input type="number" id="vnc_port" name="vnc_port" value="<%=vm_vnc_port%>" min="5900" max="65535">
+                                <input type="number" id="vnc_port" name="vnc_port" value="<%=vm_vnc_port%>" min="5900" max="65535" onchange="checkVNCPortConflict()">
+                                <div id="vnc_port_warning" style="display:none; margin-top:6px; padding:8px 10px; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; color:#856404; font-size:0.9em;"></div>
                                 <div class="cbi-value-description"><%:Port number for VNC connection (default: 5900).%></div>
                             </div>
                         </div>
@@ -286,11 +287,58 @@ function validateForm() {
         }
         
         function toggleVNCPortInput() {
-            var portManual = document.getElementById('vnc_port_mannual').checked;
-            var vncPortDiv = document.getElementById('vnc_port_div');
-            vncPortDiv.style.display = portManual ? 'block' : 'none';
-        }
-        </script>
+			var portManual = document.getElementById('vnc_port_manual').checked;
+			var vncPortDiv = document.getElementById('vnc_port_div');
+			vncPortDiv.style.display = portManual ? 'block' : 'none';
+			if (portManual) {
+				checkVNCPortConflict();
+			} else {
+				hideVNCPortWarning();
+			}
+		}
+
+		function checkVNCPortConflict() {
+			var portInput = document.getElementById('vnc_port');
+			var warning = document.getElementById('vnc_port_warning');
+			var port = portInput ? portInput.value : '';
+			if (!port || port === '') {
+				hideVNCPortWarning();
+				return;
+			}
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu","check_vnc_port")%>', true);
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.onload = function() {
+				if (xhr.status === 200) {
+					try {
+						var resp = JSON.parse(xhr.responseText);
+						if (resp.conflict) {
+							warning.style.display = 'block';
+							warning.innerHTML = '<%:Warning:%> <%:Port%> ' + resp.port + ' <%:is already in use by VM "%s". Two VMs cannot share the same VNC port.%>'.replace('%s', resp.vm_name);
+						} else {
+							hideVNCPortWarning();
+						}
+					} catch(e) {
+						hideVNCPortWarning();
+					}
+				}
+			};
+			xhr.onerror = function() { hideVNCPortWarning(); };
+			xhr.send('port=' + encodeURIComponent(port));
+		}
+
+		function hideVNCPortWarning() {
+			var warning = document.getElementById('vnc_port_warning');
+			if (warning) { warning.style.display = 'none'; }
+		}
+
+		document.addEventListener('DOMContentLoaded', function() {
+			var portManual = document.getElementById('vnc_port_manual');
+			if (portManual && portManual.checked) {
+				checkVNCPortConflict();
+			}
+		});
+		</script>
         <% end %>
         
         <% if step == 5 then %>
@@ -334,7 +382,7 @@ function validateForm() {
                     </tr>
                     <tr>
                         <td><%:Display%></td>
-                        <td><% if vm_display == "none" then %><%:None (Headless)%><% else %><% if luci.http.formvalue('vnc_port_mannual') == "1" then %>VNC (Port: <%=vm_vnc_port%>)<% else %><%:VNC (Auto Port)%><% end %><% end %></td>
+                        <td><% if vm_display == "none" then %><%:None (Headless)%><% else %><% if luci.http.formvalue('vnc_port_manual') == "1" then %>VNC (Port: <%=vm_vnc_port%>)<% else %><%:VNC (Auto Port)%><% end %><% end %></td>
                     </tr>
                     <% if vm_display == "vnc" then %>
                     <tr>

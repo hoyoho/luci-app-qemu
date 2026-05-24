@@ -1,0 +1,52 @@
+<script type="text/javascript">//<![CDATA[
+function hideDisplayVNCWarning() {
+	var warning = document.getElementById('display_vnc_port_warning');
+	if (warning) { warning.style.display = 'none'; }
+}
+
+function checkDisplayVNCPortConflict() {
+	var portInput = document.getElementById('cbid.qemu.1.port');
+	var warning = document.getElementById('display_vnc_port_warning');
+	var vmSelect = document.getElementById('cbid.qemu.1.vm');
+	if (!portInput || !warning) return;
+	var port = portInput.value;
+	if (!port || port === '') {
+		hideDisplayVNCWarning();
+		return;
+	}
+	var excludeVM = vmSelect ? vmSelect.value : '';
+	var xhr = new XMLHttpRequest();
+	xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu","check_vnc_port")%>', true);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.onload = function() {
+		if (xhr.status === 200) {
+			try {
+				var resp = JSON.parse(xhr.responseText);
+				if (resp.conflict) {
+					warning.style.display = 'block';
+					warning.innerHTML = '<%:Warning:%> <%:Port%> ' + resp.port + ' <%:is already in use by VM "%s". Two VMs cannot share the same VNC port.%>'.replace('%s', resp.vm_name);
+				} else {
+					hideDisplayVNCWarning();
+				}
+			} catch(e) {
+				hideDisplayVNCWarning();
+			}
+		}
+	};
+	xhr.onerror = function() { hideDisplayVNCWarning(); };
+	xhr.send('port=' + encodeURIComponent(port) + '&exclude_vm=' + encodeURIComponent(excludeVM));
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+	var portInput = document.getElementById('cbid.qemu.1.port');
+	if (portInput) {
+		portInput.addEventListener('change', checkDisplayVNCPortConflict);
+		portInput.addEventListener('blur', checkDisplayVNCPortConflict);
+
+		var wrapper = document.createElement('div');
+		wrapper.id = 'display_vnc_port_warning';
+		wrapper.style.cssText = 'display:none; margin-top:6px; padding:8px 10px; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; color:#856404; font-size:0.9em;';
+		portInput.parentNode.insertBefore(wrapper, portInput.nextSibling);
+	}
+});
+//]]></script>

@@ -33,7 +33,7 @@ function validateForm() {
     
     for (var i = 0; i < visibleInputs.length; i++) {
         if (!visibleInputs[i].value) {
-            alert('请填写必填字段: ' + visibleInputs[i].name);
+            alert('<%:Please fill in the required field:%> ' + visibleInputs[i].name);
             return false;
         }
     }

@@ -105,7 +105,7 @@ for _, device in ipairs(usb_devices) do
 end
 
 -- PCI Host Device
-s_pci = m:section(TypedSection, "host_dev_pci", translate("PCI Host Devices"), translate("PCI passthrough devices, requires adding 'intel_iommu=on iommu=pt' to /boot/grub/grub.cfg"))
+s_pci = m:section(TypedSection, "host_dev_pci", translate("PCI Host Devices"), translate("PCI passthrough devices, requires adding 'intel_iommu=on iommu=pt' to kernel command line"))
 s_pci.addremove = true
 s_pci.anonymous = true
 s_pci.template = "cbi/tblsection"

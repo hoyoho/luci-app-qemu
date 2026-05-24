@@ -73,7 +73,7 @@ if arg[1] then
     machine:value("isapc", translate("ISA-only PC"))
     machine:value("none", translate("empty machine"))
     machine:value("x-remote", translate("Experimental remote machine"))
-    machine.default = "pc"
+    machine.default = "q35"
 
     accel = s:taboption("machine", ListValue, "accel", translate("Acceleration"))
     accel:value("kvm", translate("KVM"))
@@ -199,7 +199,7 @@ if arg[1] then
     rtc_driftfix = s:taboption("clock", ListValue, "rtc_driftfix", translate("RTC Drift Fix"))
     rtc_driftfix:value("none", translate("None"))
     rtc_driftfix:value("slew", translate("Slew"))
-    rtc_driftfix.default = "none"
+    rtc_driftfix.default = "slew"
     rtc_driftfix.description = translate("Method to fix time drift in the VM")
 
     -- 额外参数部分
@@ -237,6 +237,10 @@ else
     status = s:option(DummyValue, "_status", translate("Status"))
     -- 自定义状态值获取函数
     function status.cfgvalue(self, section)
+        local cloning = self.map:get(section, "cloning") == "1"
+        if cloning then
+            return translate("Cloning...")
+        end
         local vm_name = self.map:get(section, "name") or section
         local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. vm_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
         if pid ~= "" then
@@ -292,6 +296,12 @@ else
     -- 使用extedit实现编辑功能
     s.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "machines", "%s")
     
+    more = s:option(Button, "_more", translate("Operations"))
+    more.inputstyle = "dropdown"
+    function more.write(self, section)
+        -- handled via JavaScript
+    end
+    
     -- 处理删除请求
     if luci.http.formvalue("delete") then
         local section = luci.http.formvalue("section")
@@ -305,5 +315,7 @@ else
         end
     end
     
-    return m
+    m:section(SimpleSection).template = "qemu/machines_actions"
+
+return m
 end

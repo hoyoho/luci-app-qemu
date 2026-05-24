@@ -88,15 +88,15 @@ if edit_type == "display" then
     type.default = "none"
     
     -- 端口分配方式
-    port_mannual = s:taboption("general", Flag, "port_mannual", translate("Manual Port"))
-    port_mannual.default = "0"
-    port_mannual:depends({type = "vnc"})
+    port_manual = s:taboption("general", Flag, "port_manual", translate("Manual Port"))
+    port_manual.default = "0"
+    port_manual:depends({type = "vnc"})
     
     -- 端口设置
     port = s:taboption("general", Value, "port", translate("Port"))
     port.default = "5900"
     port.datatype = "port"
-    port:depends({type = "vnc", port_mannual = "1"})
+    port:depends({type = "vnc", port_manual = "1"})
     
     -- 地址监听设置
     address_enabled = s:taboption("general", Flag, "address_enabled", translate("Enable Address Listen"))
@@ -125,10 +125,33 @@ if edit_type == "display" then
     
     password = s:taboption("general", Value, "password", translate("Password"))
     password:depends({type = "vnc", password_enabled = "1"})
+    password.password = true
+    password.rmempty = true
+
+    function password.write(self, section, value)
+        if value and value ~= "" then
+            self.map:set(section, "password", "B64:" .. nixio.bin.b64encode(value))
+        else
+            self.map:set(section, "password", "")
+        end
+    end
+
+    function password.cfgvalue(self, section)
+        local raw = AbstractValue.cfgvalue(self, section)
+        if not raw or raw == "" then
+            return ""
+        end
+        if raw:sub(1, 4) == "B64:" then
+            return nixio.bin.b64decode(raw:sub(5)) or raw
+        end
+        return raw
+    end
     
     keyboard = s:taboption("general", Value, "keyboard", translate("Keyboard Layout"))
     keyboard.default = "en-us"
     keyboard:depends({type = "vnc"})
+
+    m:section(SimpleSection).template = "qemu/display_vnc_check"
 elseif edit_type == "video" then
     s = m:section(NamedSection, section_id, "video")
     s.addremove = false

@@ -1,0 +1,782 @@
+<div id="vm-action-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; overflow:auto;">
+	<div id="vm-confirm-modal" class="modal" style="display:none;">
+		<h3 id="vm-confirm-title" style="margin-top:0;"></h3>
+		<p id="vm-confirm-message"></p>
+		<div class="button-row">
+			<button type="button" class="cbi-button cbi-button-neutral" onclick="hideVmConfirm()"><%:Cancel%></button>
+			<button type="button" class="cbi-button cbi-button-apply" id="vm-confirm-ok-btn"><%:OK%></button>
+		</div>
+	</div>
+
+	<div id="vm-input-modal" class="modal" style="display:none;">
+		<h3 id="vm-input-title" style="margin-top:0;"></h3>
+		<div style="margin-bottom:16px;">
+			<input type="text" id="vm-input-field" style="width:100%; box-sizing:border-box; padding:8px 12px; border-radius:4px; border:1px solid var(--border-color-low);" />
+			<div id="vm-input-hint" style="margin-top:4px; font-size:0.85em; min-height:1.2em;"></div>
+		</div>
+		<div class="button-row">
+			<button type="button" class="cbi-button cbi-button-neutral" onclick="hideVmInput()"><%:Cancel%></button>
+			<button type="button" class="cbi-button cbi-button-apply" id="vm-input-ok-btn"><%:OK%></button>
+		</div>
+	</div>
+
+	<div id="vm-delete-modal" class="modal" style="display:none; max-height:80vh; overflow-y:auto;">
+		<h3 style="margin-top:0; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border-color-low);"><%:Delete Virtual Machine%></h3>
+		<p id="delete-vm-name-text" style="margin-bottom:16px; padding:8px 12px; border-radius:4px; background-color:var(--background-color-low); font-weight:500;"></p>
+		<div id="delete-vm-loading" style="text-align:center; padding:20px;"><%:Loading associated items...%></div>
+		<div id="delete-vm-content" style="display:none;">
+			<div style="margin-bottom:24px; padding:12px; border:1px solid var(--border-color-low); border-radius:6px; background-color:var(--background-color);">
+				<h4 style="margin:0 0 12px 0; font-size:1.05em; font-weight:600;"><%:Configuration items to remove:%></h4>
+				<div id="delete-config-list" style="max-height:250px; overflow-y:auto; padding:4px 0;"></div>
+				<div style="margin-top:12px; padding-top:8px; border-top:1px dashed var(--border-color-low);">
+					<a href="#" onclick="deleteToggleAll('config', true); return false;"><%:Select All%></a>
+					<span style="margin:0 12px;">|</span>
+					<a href="#" onclick="deleteToggleAll('config', false); return false;"><%:Deselect All%></a>
+				</div>
+			</div>
+			<div id="delete-storage-section" style="margin-bottom:24px; padding:12px; border:1px solid var(--border-color-low); border-radius:6px; background-color:var(--background-color); display:none;">
+				<h4 style="margin:0 0 12px 0; font-size:1.05em; font-weight:600;"><%:Storage files to delete:%></h4>
+				<div id="delete-storage-list" style="max-height:250px; overflow-y:auto; padding:4px 0;"></div>
+				<div style="margin-top:12px; padding-top:8px; border-top:1px dashed var(--border-color-low);">
+					<a href="#" onclick="deleteToggleAll('storage', true); return false;"><%:Select All%></a>
+					<span style="margin:0 12px;">|</span>
+					<a href="#" onclick="deleteToggleAll('storage', false); return false;"><%:Deselect All%></a>
+				</div>
+			</div>
+		</div>
+		<div class="button-row" style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border-color-low);">
+			<button type="button" class="cbi-button cbi-button-neutral" onclick="hideDeleteModal()"><%:Cancel%></button>
+			<button type="button" class="cbi-button cbi-button-remove" id="delete-vm-confirm-btn" onclick="confirmDeleteVM()"><%:Delete%></button>
+		</div>
+	</div>
+</div>
+
+<script type="text/javascript">//<![CDATA[
+var deleteVMData = null;
+var vmConfirmCallback = null;
+var machinesPageUrl = '<%=luci.dispatcher.build_url("admin", "services", "qemu", "machines")%>';
+
+function reloadPage() {
+	window.location.href = machinesPageUrl;
+}
+
+function showOverlay() {
+	document.getElementById('vm-action-overlay').style.display = 'block';
+}
+
+function hideOverlay() {
+	document.getElementById('vm-action-overlay').style.display = 'none';
+}
+
+function showVmConfirm(title, message, callback) {
+	vmConfirmCallback = callback;
+	document.getElementById('vm-confirm-title').textContent = title;
+	document.getElementById('vm-confirm-message').textContent = message;
+	document.getElementById('vm-confirm-modal').style.display = '';
+	document.getElementById('vm-delete-modal').style.display = 'none';
+	showOverlay();
+}
+
+function hideVmConfirm() {
+	vmConfirmCallback = null;
+	hideOverlay();
+}
+
+document.getElementById('vm-confirm-ok-btn').addEventListener('click', function() {
+	var cb = vmConfirmCallback;
+	hideVmConfirm();
+	if (typeof cb === 'function') {
+		cb();
+	}
+});
+
+function hideDeleteModal() {
+	deleteVMData = null;
+	hideOverlay();
+}
+
+function showDeleteModal() {
+	document.getElementById('delete-vm-loading').style.display = 'block';
+	document.getElementById('delete-vm-content').style.display = 'none';
+	document.getElementById('vm-confirm-modal').style.display = 'none';
+	document.getElementById('vm-delete-modal').style.display = '';
+	document.getElementById('delete-vm-confirm-btn').disabled = false;
+	showOverlay();
+}
+
+function deleteToggleAll(group, select) {
+	var checkboxes = document.querySelectorAll('#delete-vm-content input[data-delete-group="' + group + '"]');
+	for (var i = 0; i < checkboxes.length; i++) {
+		checkboxes[i].checked = select;
+	}
+}
+
+function buildDeleteModal(data) {
+	deleteVMData = data;
+	document.getElementById('delete-vm-name-text').textContent = '<%:Deleting VM:%> ' + data.vm_name;
+
+	var configHtml = '';
+	if (data.config_items && data.config_items.length > 0) {
+		for (var i = 0; i < data.config_items.length; i++) {
+			var item = data.config_items[i];
+			configHtml += '<label style="display:block; margin-bottom:8px; padding:6px 8px; border-radius:4px; transition:background-color 0.15s;" onmouseover="this.style.backgroundColor=\'var(--background-color-low)\'" onmouseout="this.style.backgroundColor=\'\'">' +
+				'<input type="checkbox" checked data-delete-group="config" data-delete-section="' + item.section + '" style="margin-right:8px;"> ' +
+				item.label + ' <small style="opacity:0.7; margin-left:4px;">(<em>' + item.type + '</em>)</small>' +
+				'</label>';
+		}
+	} else {
+		configHtml = '<p><em><%:No associated configuration items found.%></em></p>';
+	}
+	document.getElementById('delete-config-list').innerHTML = configHtml;
+
+	var storageHtml = '';
+	if (data.storage_items && data.storage_items.length > 0) {
+		for (var i = 0; i < data.storage_items.length; i++) {
+			var item = data.storage_items[i];
+			var sizeText = '';
+			if (item.size !== null && item.size !== undefined) {
+				if (item.size > 1073741824) {
+					sizeText = ' (' + (item.size / 1073741824).toFixed(1) + 'G)';
+				} else if (item.size > 1048576) {
+					sizeText = ' (' + (item.size / 1048576).toFixed(1) + 'M)';
+				} else if (item.size > 1024) {
+					sizeText = ' (' + (item.size / 1024).toFixed(1) + 'K)';
+				} else {
+					sizeText = ' (' + item.size + 'B)';
+				}
+			}
+			storageHtml += '<label style="display:block; margin-bottom:8px; padding:6px 8px; border-radius:4px; transition:background-color 0.15s; word-break:break-all;" onmouseover="this.style.backgroundColor=\'var(--background-color-low)\'" onmouseout="this.style.backgroundColor=\'\'">' +
+				'<input type="checkbox" checked data-delete-group="storage" data-delete-section="' + item.section + '" style="margin-right:8px;"> ' +
+				item.file + sizeText + ' <small style="opacity:0.7; margin-left:4px;">(<em>' + item.label + '</em>)</small>' +
+				'</label>';
+		}
+		document.getElementById('delete-storage-section').style.display = 'block';
+	} else {
+		storageHtml = '<p><em><%:No storage files found.%></em></p>';
+		document.getElementById('delete-storage-section').style.display = 'block';
+	}
+	document.getElementById('delete-storage-list').innerHTML = storageHtml;
+
+	document.getElementById('delete-vm-loading').style.display = 'none';
+	document.getElementById('delete-vm-content').style.display = 'block';
+}
+
+function confirmDeleteVM() {
+	if (!deleteVMData) return;
+
+	var deleteConfigs = [];
+	var configCheckboxes = document.querySelectorAll('#delete-vm-content input[data-delete-group="config"]:checked');
+	for (var i = 0; i < configCheckboxes.length; i++) {
+		deleteConfigs.push(configCheckboxes[i].getAttribute('data-delete-section'));
+	}
+
+	var deleteFiles = [];
+	var storageCheckboxes = document.querySelectorAll('#delete-vm-content input[data-delete-group="storage"]:checked');
+	for (var i = 0; i < storageCheckboxes.length; i++) {
+		deleteFiles.push(storageCheckboxes[i].getAttribute('data-delete-section'));
+	}
+
+	var btn = document.getElementById('delete-vm-confirm-btn');
+	btn.disabled = true;
+	btn.textContent = '<%:Deleting...%>';
+
+	var xhr = new XMLHttpRequest();
+	xhr.open('POST', '<%=luci.dispatcher.build_url("admin", "services", "qemu", "delete_vm")%>', true);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.onload = function() {
+		if (xhr.status === 200) {
+			try {
+				var resp = JSON.parse(xhr.responseText);
+				if (resp.success) {
+					reloadPage();
+				} else {
+					showToast(resp.message || '<%:Delete failed.%>', true);
+					btn.disabled = false;
+					btn.textContent = '<%:Delete%>';
+				}
+			} catch(e) {
+				reloadPage();
+			}
+		} else {
+			showToast('<%:Delete request failed.%>', true);
+			btn.disabled = false;
+			btn.textContent = '<%:Delete%>';
+		}
+	};
+	xhr.onerror = function() {
+		showToast('<%:Network error.%>', true);
+		btn.disabled = false;
+		btn.textContent = '<%:Delete%>';
+	};
+
+	var params = 'section=' + encodeURIComponent(deleteVMData.section_id) +
+		'&delete_configs=' + encodeURIComponent(deleteConfigs.join(',')) +
+		'&delete_files=' + encodeURIComponent(deleteFiles.join(','));
+	xhr.send(params);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+	document.querySelectorAll('input[name$="._stop"]').forEach(function(btn) {
+		var form = btn.closest('form');
+		btn.type = 'button';
+		btn.onclick = null;
+		btn.addEventListener('click', function() {
+			showVmConfirm('<%:Stop Virtual Machine%>', '<%:Are you sure you want to stop this VM? Unsaved data may be lost.%>', function() {
+				form.querySelectorAll('input[data-cbi-stop-helper]').forEach(function(h) { h.remove(); });
+				var hidden = document.createElement('input');
+				hidden.type = 'hidden';
+				hidden.setAttribute('data-cbi-stop-helper', '1');
+				hidden.name = btn.name;
+				hidden.value = '1';
+				form.appendChild(hidden);
+				form.submit();
+			});
+		});
+	});
+
+	document.querySelectorAll('input[name$="._reset"]').forEach(function(btn) {
+		var form = btn.closest('form');
+		btn.type = 'button';
+		btn.onclick = null;
+		btn.addEventListener('click', function() {
+			showVmConfirm('<%:Reset Virtual Machine%>', '<%:Are you sure you want to reset this VM? This will trigger a warm reboot.%>', function() {
+				form.querySelectorAll('input[data-cbi-reset-helper]').forEach(function(h) { h.remove(); });
+				var hidden = document.createElement('input');
+				hidden.type = 'hidden';
+				hidden.setAttribute('data-cbi-reset-helper', '1');
+				hidden.name = btn.name;
+				hidden.value = '1';
+				form.appendChild(hidden);
+				form.submit();
+			});
+		});
+	});
+
+	document.querySelectorAll('input.cbi-button-remove[type="submit"]').forEach(function(btn) {
+		var name = btn.getAttribute('name') || '';
+		var match = name.match(/^cbi\.rts\.[^.]+\.(.+)$/);
+		if (match) {
+			var sectionId = match[1];
+			if (sectionId.indexOf('cbi-') === 0) {
+				sectionId = sectionId.substring(4);
+			}
+			btn.type = 'button';
+			btn.removeAttribute('onclick');
+			btn.addEventListener('click', function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+				showDeleteModal();
+
+				var xhr = new XMLHttpRequest();
+				xhr.open('POST', '<%=luci.dispatcher.build_url("admin", "services", "qemu", "delete_vm_info")%>', true);
+				xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+				xhr.onload = function() {
+					if (xhr.status === 200) {
+						try {
+							var data = JSON.parse(xhr.responseText);
+						if (data.success) {
+							data.section_id = sectionId;
+							buildDeleteModal(data);
+						} else {
+							showToast(data.message || '<%:Failed to load VM info.%>', true);
+							hideDeleteModal();
+						}
+					} catch(e) {
+						showToast('<%:Invalid response from server.%>', true);
+						hideDeleteModal();
+					}
+				} else {
+					showToast('<%:Request failed.%>', true);
+					hideDeleteModal();
+				}
+			};
+			xhr.onerror = function() {
+				showToast('<%:Network error.%>', true);
+				hideDeleteModal();
+			};
+				xhr.send('section=' + encodeURIComponent(sectionId));
+			});
+		}
+	});
+});
+//]]></script>
+
+<div id="vm-spinner-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000;">
+	<div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; color:#fff;">
+		<div class="cbi-loading-spinner" style="margin:0 auto 16px;"></div>
+		<p id="vm-spinner-text" style="font-size:1.1em;"><%:Processing...%></p>
+	</div>
+</div>
+
+<div id="vm-toast" style="display:none; position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:3000; padding:12px 24px; border-radius:6px; font-size:0.95em; box-shadow:0 4px 12px rgba(0,0,0,0.3); max-width:90%; text-align:center; word-break:break-word;"></div>
+
+<div id="vm-dropdown-menu" class="vm-ops-dropdown" style="display:none; position:fixed; z-index:1500; min-width:160px; border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.3); padding:4px 0;"></div>
+
+<style>
+.cbi-loading-spinner {
+	width:40px; height:40px; border:4px solid rgba(255,255,255,0.3);
+	border-top-color:#fff; border-radius:50%; animation:vm-spin 0.8s linear infinite;
+}
+@keyframes vm-spin { to { transform:rotate(360deg); } }
+.vm-ops-dropdown .vm-ops-item {
+	display:block; width:100%; padding:8px 16px; border:none; background:transparent; text-align:left;
+	font-size:0.95em; cursor:pointer; white-space:nowrap;
+}
+.vm-ops-dropdown .vm-ops-item:hover { }
+.vm-ops-dropdown .vm-ops-item.disabled { opacity:0.4; cursor:default; pointer-events:none; }
+.vm-ops-dropdown .vm-ops-item.disabled:hover { background:transparent; }
+.vm-ops-dropdown .vm-ops-separator { height:1px; margin:4px 8px; }
+</style>
+
+<script type="text/javascript">//<![CDATA[
+function showSpinner(text) {
+	document.getElementById('vm-spinner-text').textContent = text || '<%:Processing...%>';
+	document.getElementById('vm-spinner-overlay').style.display = 'block';
+}
+
+function hideSpinner() {
+	document.getElementById('vm-spinner-overlay').style.display = 'none';
+}
+
+var vmInputCallback = null;
+var vmInputValidator = null;
+var vmInputCheckTimer = null;
+
+function showToast(message, isError) {
+	var toast = document.getElementById('vm-toast');
+	toast.textContent = message;
+	toast.style.background = isError ? '#d32f2f' : '#323232';
+	toast.style.color = '#ffffff';
+	toast.style.display = 'block';
+	toast.style.opacity = '1';
+	toast.style.transition = 'opacity 0.3s';
+	clearTimeout(toast._timeout);
+	toast._timeout = setTimeout(function() {
+		toast.style.opacity = '0';
+		setTimeout(function() { toast.style.display = 'none'; }, 300);
+	}, 4000);
+}
+
+function showVmInput(title, defaultValue, placeholder, validator, callback) {
+	vmInputCallback = callback;
+	vmInputValidator = validator || null;
+	document.getElementById('vm-input-title').textContent = title;
+	var field = document.getElementById('vm-input-field');
+	field.value = defaultValue || '';
+	field.placeholder = placeholder || '';
+	document.getElementById('vm-input-hint').textContent = '';
+	document.getElementById('vm-input-ok-btn').disabled = false;
+	document.getElementById('vm-input-modal').style.display = '';
+	document.getElementById('vm-confirm-modal').style.display = 'none';
+	document.getElementById('vm-delete-modal').style.display = 'none';
+	showOverlay();
+	field.focus();
+
+	clearTimeout(vmInputCheckTimer);
+	if (validator) {
+		vmInputCheckTimer = setTimeout(function() { validateVmInput(); }, 300);
+	}
+}
+
+function hideVmInput() {
+	vmInputCallback = null;
+	vmInputValidator = null;
+	clearTimeout(vmInputCheckTimer);
+	hideOverlay();
+}
+
+function validateVmInput() {
+	if (!vmInputValidator) return;
+	var name = document.getElementById('vm-input-field').value.trim();
+	if (!name) {
+		document.getElementById('vm-input-hint').textContent = '';
+		return;
+	}
+	var xhr = new XMLHttpRequest();
+	xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu")%>/check_vm_name', true);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.onload = function() {
+		if (xhr.status === 200) {
+			try {
+				var resp = JSON.parse(xhr.responseText);
+				var hint = document.getElementById('vm-input-hint');
+				if (resp.available) {
+					hint.textContent = '\u2714 ' + '<%:Name available%>';
+					hint.style.color = '#4caf50';
+				} else {
+					hint.textContent = '\u2718 ' + (resp.message || '<%:Name already exists%>');
+					hint.style.color = '#d32f2f';
+				}
+			} catch(e) {}
+		}
+	};
+	xhr.send('name=' + encodeURIComponent(name));
+}
+
+document.getElementById('vm-input-ok-btn').addEventListener('click', function() {
+	var cb = vmInputCallback;
+	var name = document.getElementById('vm-input-field').value.trim();
+	hideVmInput();
+	if (typeof cb === 'function' && name) {
+		cb(name);
+	}
+});
+
+document.getElementById('vm-input-field').addEventListener('input', function() {
+	clearTimeout(vmInputCheckTimer);
+	if (vmInputValidator) {
+		vmInputCheckTimer = setTimeout(function() { validateVmInput(); }, 500);
+	}
+});
+
+document.getElementById('vm-input-field').addEventListener('keydown', function(e) {
+	if (e.key === 'Enter') {
+		e.preventDefault();
+		document.getElementById('vm-input-ok-btn').click();
+	}
+});
+
+function hideDropdown() {
+	document.getElementById('vm-dropdown-menu').style.display = 'none';
+}
+
+function pollFreezeStatus(sectionId) {
+	var pollCount = 0;
+	var maxPolls = 800;
+	var lastProgress = -1;
+	var staleCount = 0;
+	var maxStale = 80;
+	var interval = setInterval(function() {
+		pollCount++;
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu")%>/vm_state', true);
+		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+		xhr.onload = function() {
+			if (xhr.status === 200) {
+				try {
+					var state = JSON.parse(xhr.responseText);
+					if (state.freeze_progress > 0) {
+						var sizeMb = (state.freeze_progress / 1048576).toFixed(0);
+						document.getElementById('vm-spinner-text').textContent = '<%:Freezing VM... %>' + sizeMb + ' MB';
+						if (state.freeze_progress !== lastProgress) {
+							lastProgress = state.freeze_progress;
+							staleCount = 0;
+						} else {
+							staleCount++;
+						}
+					} else {
+						staleCount++;
+					}
+				if (!state.running && state.has_state) {
+					clearInterval(interval);
+					reloadPage();
+				} else if (!state.running && !state.has_state && !state.freezing) {
+					clearInterval(interval);
+					hideSpinner();
+					showToast('<%:Freeze failed. VM stopped but no state file was created.%>', true);
+				} else if (state.running && !state.freezing) {
+					clearInterval(interval);
+					hideSpinner();
+					showToast('<%:Freeze failed. The VM may not support migration (e.g. VFIO PCI passthrough devices).%>', true);
+				}
+				} catch(e) {}
+			}
+		};
+	xhr.onerror = function() {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Network error while checking freeze status.%>', true);
+	};
+
+
+	if (staleCount >= maxStale) {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Freeze timed out. No progress for 2 minutes. Please check the VM status manually.%>', true);
+	}
+	if (pollCount >= maxPolls) {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Freeze timed out (20 min). Please check the VM status manually.%>', true);
+	}
+		if (pollCount >= maxPolls) {
+			clearInterval(interval);
+			hideSpinner();
+			alert('<%:Freeze timed out (20 min). Please check the VM status manually.%>');
+		}
+	}, 1500);
+}
+
+function pollCloneStatus(sectionId) {
+	var pollCount = 0;
+	var maxPolls = 800;
+	var lastProgress = -1;
+	var staleCount = 0;
+	var maxStale = 80;
+	var interval = setInterval(function() {
+		pollCount++;
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu")%>/vm_state', true);
+		xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+		xhr.onload = function() {
+			if (xhr.status === 200) {
+				try {
+					var state = JSON.parse(xhr.responseText);
+					if (state.clone_progress > 0) {
+						var sizeMb = (state.clone_progress / 1048576).toFixed(0);
+						document.getElementById('vm-spinner-text').textContent = '<%:Cloning VM... %>' + sizeMb + ' MB';
+						if (state.clone_progress !== lastProgress) {
+							lastProgress = state.clone_progress;
+							staleCount = 0;
+						} else {
+							staleCount++;
+						}
+					} else {
+						staleCount++;
+					}
+				if (!state.cloning) {
+					clearInterval(interval);
+					if (state.clone_failed) {
+						hideSpinner();
+						showToast('<%:Clone completed with errors. Some files may not have been copied correctly. Check the new VM configuration.%>', true);
+					} else {
+						reloadPage();
+					}
+				}
+				} catch(e) {}
+			}
+		};
+	xhr.onerror = function() {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Network error while checking clone status.%>', true);
+	};
+
+
+	if (staleCount >= maxStale) {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Clone timed out. No progress for 2 minutes. Please check the VM status manually.%>', true);
+	}
+	if (pollCount >= maxPolls) {
+		clearInterval(interval);
+		hideSpinner();
+		showToast('<%:Clone timed out (20 min). Please check the VM status manually.%>', true);
+	}
+	}, 2000);
+}
+
+function isDarkTheme() {
+	var html = document.documentElement;
+	if (html.classList.contains('dark') || html.getAttribute('data-theme') === 'dark') return true;
+	if (document.body.classList.contains('dark')) return true;
+	var bodyBg = window.getComputedStyle(document.body).backgroundColor;
+	var match = bodyBg.match(/[\d.]+/g);
+	if (match && match.length >= 3) {
+		var r = parseFloat(match[0]), g = parseFloat(match[1]), b = parseFloat(match[2]);
+		return (r + g + b) / 3 < 128;
+	}
+	return false;
+}
+
+function applyDropdownTheme(menu) {
+	if (isDarkTheme()) {
+		menu.style.background = '#2a2a2a';
+		menu.style.border = '1px solid #444444';
+		menu.style.color = '#e0e0e0';
+		menu.setAttribute('data-theme', 'dark');
+	} else {
+		menu.style.background = '#ffffff';
+		menu.style.border = '1px solid #cccccc';
+		menu.style.color = '#333333';
+		menu.setAttribute('data-theme', 'light');
+	}
+}
+
+function showDropdown(btn, sectionId) {
+	var menu = document.getElementById('vm-dropdown-menu');
+	var rect = btn.getBoundingClientRect();
+	menu.style.display = 'block';
+	menu.style.top = (rect.bottom + 4) + 'px';
+	menu.style.left = rect.left + 'px';
+	menu.innerHTML = '<div class="vm-ops-item disabled"><%:Loading...%></div>';
+	menu.setAttribute('data-section', sectionId);
+	applyDropdownTheme(menu);
+
+	var fetchXhr = new XMLHttpRequest();
+	fetchXhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu")%>/vm_state', true);
+	fetchXhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	fetchXhr.onload = function() {
+		if (menu.getAttribute('data-section') !== sectionId) return;
+		if (fetchXhr.status === 200) {
+			try {
+				var state = JSON.parse(fetchXhr.responseText);
+				menu.innerHTML = '';
+				buildMenu(menu, sectionId, state);
+			} catch(e) {
+				menu.innerHTML = '<div class="vm-ops-item disabled"><%:Failed to load.%></div>';
+			}
+		} else {
+			menu.innerHTML = '<div class="vm-ops-item disabled"><%:Failed to load.%></div>';
+		}
+	};
+	fetchXhr.onerror = function() {
+		menu.innerHTML = '<div class="vm-ops-item disabled"><%:Failed to load.%></div>';
+	};
+	fetchXhr.send('section=' + encodeURIComponent(sectionId));
+}
+
+function buildMenu(menu, sectionId, state) {
+	var vmName = state.vm_name || '';
+	var isRunning = state.running;
+	var hasState = state.has_state;
+	var isCloning = state.cloning;
+
+	addMenuItem(menu, '<%:Clone%>', !isRunning && !isCloning, function() {
+		var defaultName = vmName + '-clone';
+		hideDropdown();
+		showVmInput('<%:Clone Virtual Machine%>', defaultName, '<%:Enter name for cloned VM%>', true, function(newName) {
+			showSpinner('<%:Cloning VM, this may take a moment...%>');
+			ajaxAction('clone_vm', sectionId, {new_name: newName}, function(resp) {
+				if (resp.success) {
+					if (resp.cloning) {
+						pollCloneStatus(resp.new_section);
+					} else {
+						reloadPage();
+					}
+				} else {
+					hideSpinner();
+					showToast(resp.message || '<%:Clone failed.%>', true);
+				}
+			});
+		});
+	});
+
+	if (isCloning) {
+		addMenuItem(menu, '\u23F3 <%:Cloning in progress...%>', false);
+		addSeparator(menu);
+	}
+
+	addMenuItem(menu, '<%:Rename%>', !isRunning && !isCloning, function() {
+		hideDropdown();
+		showVmInput('<%:Rename Virtual Machine%>', vmName, '<%:Enter new name for VM%>', true, function(newName) {
+			if (newName === vmName) return;
+			showSpinner('<%:Renaming VM...%>');
+			ajaxAction('rename_vm', sectionId, {new_name: newName}, function(resp) {
+				if (resp.success) {
+					reloadPage();
+				} else {
+					hideSpinner();
+					showToast(resp.message || '<%:Rename failed.%>', true);
+				}
+			});
+		});
+	});
+
+	addSeparator(menu);
+
+	addMenuItem(menu, '<%:Freeze%>', isRunning, function() {
+		hideDropdown();
+		showVmConfirm('<%:Freeze Virtual Machine%>', '<%:Freeze will save the VM state and stop it. You can resume later.%>', function() {
+			showSpinner('<%:Freezing VM...%>');
+			ajaxAction('freeze_vm', sectionId, {}, function(resp) {
+				if (resp.success) {
+					pollFreezeStatus(sectionId);
+				} else {
+					hideSpinner();
+					showToast(resp.message || '<%:Freeze failed.%>', true);
+				}
+			});
+		});
+	});
+
+}
+
+function addMenuItem(menu, text, enabled, callback) {
+	var item = document.createElement('button');
+	item.type = 'button';
+	item.className = 'vm-ops-item' + (enabled ? '' : ' disabled');
+	item.textContent = text;
+	var isDark = menu.getAttribute('data-theme') === 'dark';
+	if (enabled) {
+		item.addEventListener('click', function(e) {
+			e.stopPropagation();
+			callback();
+		});
+		item.addEventListener('mouseenter', function() {
+			item.style.background = isDark ? '#3a3a3a' : '#f0f0f0';
+		});
+		item.addEventListener('mouseleave', function() {
+			item.style.background = 'transparent';
+		});
+	}
+	menu.appendChild(item);
+}
+
+function addSeparator(menu) {
+	var sep = document.createElement('div');
+	sep.className = 'vm-ops-separator';
+	sep.style.background = menu.getAttribute('data-theme') === 'dark' ? '#444444' : '#dddddd';
+	menu.appendChild(sep);
+}
+
+function ajaxAction(action, sectionId, extraParams, callback) {
+	var xhr = new XMLHttpRequest();
+	xhr.open('POST', '<%=luci.dispatcher.build_url("admin","services","qemu")%>/' + action, true);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.onload = function() {
+		if (xhr.status === 200) {
+			try {
+				var resp = JSON.parse(xhr.responseText);
+				callback(resp);
+			} catch(e) {
+				hideSpinner();
+				showToast('<%:Server returned invalid response.%>', true);
+			}
+		} else {
+			hideSpinner();
+			showToast('<%:Request failed.%>', true);
+		}
+	};
+	xhr.onerror = function() {
+		hideSpinner();
+		showToast('<%:Network error.%>', true);
+	};
+
+	var params = 'section=' + encodeURIComponent(sectionId);
+	for (var key in extraParams) {
+		if (extraParams.hasOwnProperty(key)) {
+			params += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(extraParams[key]);
+		}
+	}
+	xhr.send(params);
+}
+
+document.addEventListener('click', function(e) {
+	var menu = document.getElementById('vm-dropdown-menu');
+	if (menu.style.display === 'block') {
+		var clickedOnMore = e.target.closest('input[name$="._more"]');
+		if (!clickedOnMore && !e.target.closest('#vm-dropdown-menu')) {
+			menu.style.display = 'none';
+		}
+	}
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+	document.querySelectorAll('input[name$="._more"]').forEach(function(btn) {
+		btn.type = 'button';
+		btn.onclick = null;
+		btn.value = '<%:Operations%>';
+		btn.classList.add('cbi-button', 'cbi-button-neutral');
+		btn.addEventListener('click', function(e) {
+			e.preventDefault();
+			e.stopPropagation();
+			var m = btn.name.match(/cbid\.qemu\.(.+)\._more$/);
+			var sectionId = m ? m[1] : '';
+			if (sectionId) {
+				showDropdown(btn, sectionId);
+			}
+		});
+	});
+});
+//]]></script>

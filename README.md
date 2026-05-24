@@ -198,6 +198,93 @@ Each VM has its own configuration including:
 - Boot options
 - Auto-start configuration
 
+## Enabling ALSA Audio Support
+
+By default, the QEMU package in the OpenWrt feed is compiled without any audio backend (`--audio-drv-list=''`). This means the sound devices configured in luci-app-qemu (AC97, HDA ICH6, HDA ICH9) will silently discard all audio data.
+
+To enable real audio output via ALSA, you need to recompile the QEMU package from the OpenWrt SDK with ALSA support.
+
+### Why Recompilation Is Needed
+
+The upstream QEMU package explicitly disables all audio backends:
+
+```makefile
+--audio-drv-list=''        # No audio driver compiled
+--disable-alsa             # ALSA disabled
+--disable-oss              # OSS disabled
+--disable-pa               # PulseAudio disabled
+```
+
+This means even if your router has a working sound card with ALSA drivers loaded, QEMU cannot use them.
+
+### Modifying the QEMU Package Makefile
+
+Locate the QEMU package in your OpenWrt SDK:
+
+```
+<sdk-root>/package/feeds/packages/qemu/Makefile
+```
+
+Apply the following changes:
+
+**1. Add a menuconfig option** — place this near `config QEMU_ZSTD`:
+
+```makefile
+config QEMU_AUDIO_ALSA
+	bool "QEMU ALSA audio support"
+	default n
+```
+
+**2. Update configure arguments** — find the `--audio-drv-list` and `--disable-alsa` lines and replace them:
+
+```makefile
+--audio-drv-list='$(if $(CONFIG_QEMU_AUDIO_ALSA),alsa,)' \
+--$(if $(CONFIG_QEMU_AUDIO_ALSA),enable,disable)-alsa \
+```
+
+Leave the other audio-related lines (`--disable-oss`, `--disable-pa`) unchanged.
+
+**3. Add dependency** — in the `qemu-target` package block, add to the `DEPENDS` line:
+
+```makefile
++QEMU_AUDIO_ALSA:alsa-lib \
+```
+
+**4. Register the config symbol** — add to `PKG_CONFIG_DEPENDS`:
+
+```makefile
+CONFIG_QEMU_AUDIO_ALSA \
+```
+
+### Building and Installing
+
+```bash
+# 1. Enter the SDK directory
+cd <sdk-root>
+
+# 2. Enable the option in menuconfig
+make menuconfig
+# Navigate to: Utilities → Virtualization → QEMU ALSA audio support → Enable
+
+# 3. Compile the QEMU package
+make package/qemu/compile V=s
+
+# 4. Find the built package
+ls bin/packages/*/packages/qemu-*_*.ipk
+
+# 5. Copy to your router and install
+scp bin/packages/*/packages/qemu-*_*.ipk root@<router-ip>:/tmp/
+ssh root@<router-ip>
+opkg install /tmp/qemu-*.ipk --force-reinstall
+```
+
+After reinstalling the QEMU package, the sound devices configured in luci-app-qemu will output audio through the router's ALSA sound system. Verify with:
+
+```bash
+qemu-system-x86_64 -audiodev help
+# Should now list "alsa" among available audio drivers
+```
+
 ## Troubleshooting
 
 ### Common Issues
