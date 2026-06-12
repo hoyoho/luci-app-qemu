@@ -2,12 +2,7 @@ local m, s, o
 
 m = Map("qemu", translate("QEMU Watchdog Devices"))
 
--- 获取所有虚拟机名称
-local vm_list = {}
-local uci = require("luci.model.uci").cursor()
-uci:foreach("qemu", "vm", function(s)
-    table.insert(vm_list, {name = s.name or s['.name'], title = s.name or s['.name']})
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
 
 -- 看门狗设备列表部分
 s = m:section(TypedSection, "watchdog", translate("Watchdog Devices"))

@@ -6,24 +6,8 @@ local _ = luci.i18n.translate
 local section_id = arg[1] or luci.dispatcher.context.requestpath[#luci.dispatcher.context.requestpath]
 local uci = require("luci.model.uci").cursor()
 
-local disk_type = ""
-
-if section_id then
-    uci:foreach("qemu", "disk", function(s)
-        if s[".name"] == section_id then
-            disk_type = "disk"
-            return false
-        end
-    end)
-    if disk_type == "" then
-        uci:foreach("qemu", "cdrom", function(s)
-            if s[".name"] == section_id then
-                disk_type = "cdrom"
-                return false
-            end
-        end)
-    end
-end
+local util = require("luci.model.cbi.qemu.util")
+local disk_type = util.find_section_type(section_id, {"disk", "cdrom"})
 
 local page_title
 if disk_type == "disk" then
@@ -39,26 +23,12 @@ m = Map("qemu", page_title)
 m.redirect = luci.dispatcher.build_url("admin", "services", "qemu", "storage")
 
 m.on_init = function(self)
-    if section_id then
-        local exists = false
-        if disk_type ~= "" then
-            uci:foreach("qemu", disk_type, function(s)
-                if s[".name"] == section_id then
-                    exists = true
-                    return false
-                end
-            end)
-        end
-        if not exists then
-            luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "storage"))
-        end
+    if section_id and disk_type ~= "" and not util.section_exists(section_id, disk_type) then
+        luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "storage"))
     end
 end
 
-local vm_list = {}
-uci:foreach("qemu", "vm", function(vm_section)
-    table.insert(vm_list, {name = vm_section.name or vm_section['.name'], title = vm_section.name or vm_section['.name']})
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
 
 local section_title
 if disk_type == "disk" then
@@ -135,7 +105,7 @@ if disk_type == "disk" then
 end
 o.validate = function(self, value, section)
     if value then
-        if not value:match("^") then
+        if not value:match("^/") then
             value = storage_path .. "/" .. value
         end
     end

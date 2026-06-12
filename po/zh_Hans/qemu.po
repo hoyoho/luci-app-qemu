@@ -636,12 +636,6 @@ msgstr "WAN 接口"
 msgid "LAN Interface"
 msgstr "LAN 接口"
 
-msgid "Enable Password"
-msgstr "启用密码"
-
-msgid "Password"
-msgstr "密码"
-
 msgid "Keyboard Layout"
 msgstr "键盘布局"
 

@@ -1,5 +1,4 @@
 local m, s, o
-local uci = require("luci.model.uci").cursor()
 local TypedSection = require("luci.cbi").TypedSection
 local _ = luci.i18n.translate
 
@@ -7,11 +6,7 @@ local _ = luci.i18n.translate
 m = Map("qemu", translate("QEMU Network Management"))
 m.pageaction = true
 
--- 获取所有虚拟机列表
-local vm_list = {}
-uci:foreach("qemu", "vm", function(s)
-    table.insert(vm_list, {name = s[".name"], title = s.name or s[".name"]})
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
 
 -- Bridge网络
 local s1 = m:section(TypedSection, "net_bridge", translate("Bridge Networks"))
@@ -153,10 +148,10 @@ o = s5:option(DummyValue, "mac", translate("MAC Address"))
 -- 模型
 o = s5:option(DummyValue, "model", translate("Model"))
 
--- Connect
+-- 连接地址
 o = s5:option(DummyValue, "connect", translate("Connect"))
 
--- Listen
+-- 监听地址
 o = s5:option(DummyValue, "listen", translate("Listen"))
 
 -- 返回主 Map

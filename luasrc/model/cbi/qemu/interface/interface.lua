@@ -2,14 +2,9 @@ local m, s, o
 
 m = Map("qemu", translate("QEMU Interface Devices"))
 
--- 获取所有虚拟机名称
-local vm_list = {}
-local uci = require("luci.model.uci").cursor()
-uci:foreach("qemu", "vm", function(s)
-    table.insert(vm_list, {name = s.name or s['.name'], title = s.name or s['.name']})
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
 
--- Pseudo TTY Interface
+-- Pseudo TTY 接口
 s_pty = m:section(TypedSection, "interface_pty", translate("Pseudo TTY Interface"), translate("Pseudo TTY"))
 s_pty.addremove = true
 s_pty.anonymous = true
@@ -29,7 +24,7 @@ o:value("serial", translate("Serial"))
 o:value("parallel", translate("Parallel"))
 o.default = "serial"
 
--- UNIX Socket Interface
+-- UNIX Socket 接口
 s_unix = m:section(TypedSection, "interface_unix", translate("UNIX Socket Interface"), translate("UNIX socket"))
 s_unix.addremove = true
 s_unix.anonymous = true
@@ -49,11 +44,11 @@ o:value("serial", translate("Serial"))
 o:value("parallel", translate("Parallel"))
 o.default = "serial"
 
--- Path
+-- 路径
 o = s_unix:option(Value, "path", translate("Path"))
 o.placeholder = translate("Enter path")
 
--- File Interface
+-- 文件接口
 s_file = m:section(TypedSection, "interface_file", translate("File Interface"), translate("Output to file"))
 s_file.addremove = true
 s_file.anonymous = true
@@ -73,7 +68,7 @@ o:value("serial", translate("Serial"))
 o:value("parallel", translate("Parallel"))
 o.default = "serial"
 
--- Path
+-- 路径
 o = s_file:option(Value, "path", translate("Path"))
 o.placeholder = translate("Enter path")
 

@@ -58,7 +58,7 @@ if arg[1] then
     machine:value("pc-i440fx-8.2", translate("Standard PC (i440FX + PIIX, 1996)"))
     machine:value("pc-i440fx-8.1", translate("Standard PC (i440FX + PIIX, 1996)"))
     machine:value("pc-i440fx-8.0", translate("Standard PC (i440FX + PIIX, 1996)"))
-    -- Standard PC (Q35 + ICH9, 2009)
+    -- 标准 PC (Q35 + ICH9, 2009)
     machine:value("q35", translate("Standard PC (Q35 + ICH9, 2009)"))
     machine:value("pc-q35-10.1", translate("Standard PC (Q35 + ICH9, 2009)"))
     machine:value("pc-q35-10.0", translate("Standard PC (Q35 + ICH9, 2009)"))
@@ -241,13 +241,24 @@ else
         if cloning then
             return translate("Cloning...")
         end
-        local vm_name = self.map:get(section, "name") or section
-        local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. vm_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
-        if pid ~= "" then
-            return translate("Running")
-        else
-            return translate("Stopped")
+        local safe_name = (self.map:get(section, "name") or section):gsub("[^%w_%-%.]", "")
+        local pid = ""
+        local pf = io.open("/var/run/qemu-" .. safe_name .. ".pid", "r")
+        if pf then
+            pid = pf:read("*a"):match("%S+") or ""
+            pf:close()
         end
+        if pid ~= "" then
+            local cf = io.open("/proc/" .. pid .. "/cmdline", "r")
+            if cf then
+                local cmdline = cf:read("*a")
+                cf:close()
+                if cmdline and cmdline:find("qemu%-system") then
+                    return translate("Running")
+                end
+            end
+        end
+        return translate("Stopped")
     end
     
     -- 显示CPU配置列
@@ -269,7 +280,8 @@ else
     start = s:option(Button, "_start", translate("Start"))
     start.inputstyle = "apply"
     function start.write(self, section)
-        luci.sys.call("/etc/init.d/qemu start " .. section)
+        local safe_sec = section:gsub("[^%w_%-]", "")
+        luci.sys.call("/etc/init.d/qemu start " .. safe_sec)
         luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "machines"))
     end
     
@@ -277,7 +289,8 @@ else
     stop = s:option(Button, "_stop", translate("Stop"))
     stop.inputstyle = "reset"
     function stop.write(self, section)
-        luci.sys.call("/etc/init.d/qemu stop " .. section)
+        local safe_sec = section:gsub("[^%w_%-]", "")
+        luci.sys.call("/etc/init.d/qemu stop " .. safe_sec)
         luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "machines"))
     end
     
@@ -286,7 +299,7 @@ else
     reset.inputstyle = "reload"
     function reset.write(self, section)
         local uci = require("luci.model.uci").cursor()
-        local name = uci:get("qemu", section, "name") or section
+        local name = (uci:get("qemu", section, "name") or section):gsub("[^%w_%-%.]", "")
         local qmp_socket = "/var/run/qemu-" .. name .. "-qmp.sock"
         local cmd = "(echo '{\"execute\": \"qmp_capabilities\"}'; echo '{\"execute\": \"system_reset\"}') | socat - unix-connect:" .. qmp_socket
         luci.sys.exec(cmd)
@@ -299,7 +312,7 @@ else
     more = s:option(Button, "_more", translate("Operations"))
     more.inputstyle = "dropdown"
     function more.write(self, section)
-        -- handled via JavaScript
+        -- 通过 JavaScript 处理
     end
     
     -- 处理删除请求

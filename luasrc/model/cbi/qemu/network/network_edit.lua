@@ -7,46 +7,16 @@ require "luci.model.uci"
 math.randomseed(os.time())
 
 local section_id = arg[1]
-local edit_type = ""
-
-if section_id then
-    local uci = require("luci.model.uci").cursor()
-    local network_types = {"bridge", "user", "tap", "l2tpv3", "socket"}
-    for _, nt in ipairs(network_types) do
-        local config_type = "net_" .. nt
-        uci:foreach("qemu", config_type, function(s)
-            if s[".name"] == section_id then
-                edit_type = nt
-                return false
-            end
-        end)
-        if edit_type ~= "" then
-            break
-        end
-    end
-end
-
-if edit_type == "" then
-    edit_type = "bridge"
-end
+local util = require("luci.model.cbi.qemu.util")
+local full_type = util.find_section_type(section_id, {"net_bridge", "net_user", "net_tap", "net_l2tpv3", "net_socket"})
+local edit_type = full_type ~= "" and full_type:gsub("^net_", "") or "bridge"
 
 m = Map("qemu", translate("Edit Network Interface"))
 m.redirect = luci.dispatcher.build_url("admin", "services", "qemu", "networks")
 m.pageaction = true
 m.on_init = function(self)
-    if section_id then
-        local uci = require("luci.model.uci").cursor()
-        local exists = false
-        local config_type = "net_" .. edit_type
-        uci:foreach("qemu", config_type, function(s)
-            if s[".name"] == section_id then
-                exists = true
-                return false
-            end
-        end)
-        if not exists then
-            luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks"))
-        end
+    if section_id and not util.section_exists(section_id, "net_" .. edit_type) then
+        luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "networks"))
     end
 end
 
@@ -59,10 +29,10 @@ s:tab("general", translate("General Settings"))
 vm = s:taboption("general", ListValue, "vm", translate("Virtual Machine"))
 vm.rmempty = true
 
-local uci = require("luci.model.uci").cursor()
-uci:foreach("qemu", "vm", function(vm_section)
-    vm:value(vm_section.name, vm_section.name)
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
+for _, vm_item in ipairs(vm_list) do
+    vm:value(vm_item.name, vm_item.title)
+end
 
 o = s:taboption("general", Value, "id", translate("Interface ID"))
 o.default = "0"

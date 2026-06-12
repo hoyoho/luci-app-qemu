@@ -7,7 +7,7 @@ require "luci.model.uci"
 m = Map("qemu", translate("Display Devices"))
 m.pageaction = true
 
--- Display Devices 表格
+-- 显示设备列表
 s_display = m:section(TypedSection, "display", translate("Monitor Devices"))
 s_display.anonymous = true
 s_display.addremove = true
@@ -42,16 +42,6 @@ function port_display.cfgvalue(self, section)
     return self.map:get(section, "port") or "5900"
 end
 
--- 显示密码状态
-password_display = s_display:option(DummyValue, "password", translate("Password"))
-function password_display.cfgvalue(self, section)
-    local password_enabled = self.map:get(section, "password_enabled")
-    if password_enabled == "1" then
-        return translate("Enabled")
-    end
-    return translate("Disabled")
-end
-
 -- 编辑按钮
 s_display.extedit = luci.dispatcher.build_url("admin", "services", "qemu", "display", "edit", "%s")
 
@@ -63,7 +53,7 @@ s_display.create = function(self, section)
     return new_section
 end
 
--- Video Devices 表格
+-- 视频设备列表
 s_video = m:section(TypedSection, "video", translate("Video Devices"))
 s_video.anonymous = true
 s_video.addremove = true

@@ -6,30 +6,9 @@ require "luci.model.uci"
 
 -- 获取参数
 local section_id = arg[1]
-local edit_type = ""
+local util = require("luci.model.cbi.qemu.util")
+local edit_type = util.find_section_type(section_id, {"display", "video"})
 
--- 尝试自动检测编辑类型
-if section_id then
-    local uci = require("luci.model.uci").cursor()
-    -- 检查是否为display类型
-    uci:foreach("qemu", "display", function(s)
-        if s[".name"] == section_id then
-            edit_type = "display"
-            return false
-        end
-    end)
-    -- 检查是否为video类型
-    if edit_type == "" then
-        uci:foreach("qemu", "video", function(s)
-            if s[".name"] == section_id then
-                edit_type = "video"
-                return false
-            end
-        end)
-    end
-end
-
--- 如果无法检测到类型，默认使用display
 if edit_type == "" then
     edit_type = "display"
 end
@@ -48,18 +27,8 @@ end
 m.redirect = luci.dispatcher.build_url("admin", "services", "qemu", "display")
 m.pageaction = true
 m.on_init = function(self)
-    if section_id then
-        local uci = require("luci.model.uci").cursor()
-        local exists = false
-        uci:foreach("qemu", edit_type, function(s)
-            if s[".name"] == section_id then
-                exists = true
-                return false
-            end
-        end)
-        if not exists then
-            luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "display"))
-        end
+    if section_id and not util.section_exists(section_id, edit_type) then
+        luci.http.redirect(luci.dispatcher.build_url("admin", "services", "qemu", "display"))
     end
 end
 
@@ -77,10 +46,10 @@ if edit_type == "display" then
     vm.rmempty = true
     
     -- 填充虚拟机列表
-    local uci = require("luci.model.uci").cursor()
-    uci:foreach("qemu", "vm", function(vm_section)
-        vm:value(vm_section.name, vm_section.name)
-    end)
+    local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
+    for _, vm_item in ipairs(vm_list) do
+        vm:value(vm_item.name, vm_item.title)
+    end
     
     type = s:taboption("general", ListValue, "type", translate("Type"))
     type:value("none", translate("None (Headless)"))
@@ -118,35 +87,6 @@ if edit_type == "display" then
     address.default = "0.0.0.0"
     address:depends({type = "vnc", address_enabled = "1"})
     
-    -- 密码设置
-    password_enabled = s:taboption("general", Flag, "password_enabled", translate("Enable Password"))
-    password_enabled.default = "0"
-    password_enabled:depends({type = "vnc"})
-    
-    password = s:taboption("general", Value, "password", translate("Password"))
-    password:depends({type = "vnc", password_enabled = "1"})
-    password.password = true
-    password.rmempty = true
-
-    function password.write(self, section, value)
-        if value and value ~= "" then
-            self.map:set(section, "password", "B64:" .. nixio.bin.b64encode(value))
-        else
-            self.map:set(section, "password", "")
-        end
-    end
-
-    function password.cfgvalue(self, section)
-        local raw = AbstractValue.cfgvalue(self, section)
-        if not raw or raw == "" then
-            return ""
-        end
-        if raw:sub(1, 4) == "B64:" then
-            return nixio.bin.b64decode(raw:sub(5)) or raw
-        end
-        return raw
-    end
-    
     keyboard = s:taboption("general", Value, "keyboard", translate("Keyboard Layout"))
     keyboard.default = "en-us"
     keyboard:depends({type = "vnc"})
@@ -164,10 +104,10 @@ elseif edit_type == "video" then
     vm.rmempty = true
     
     -- 填充虚拟机列表
-    local uci = require("luci.model.uci").cursor()
-    uci:foreach("qemu", "vm", function(vm_section)
-        vm:value(vm_section.name, vm_section.name)
-    end)
+    local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
+    for _, vm_item in ipairs(vm_list) do
+        vm:value(vm_item.name, vm_item.title)
+    end
     
     -- 视频设备类型
     type = s:taboption("general", ListValue, "type", translate("Video Device Type"))

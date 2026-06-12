@@ -27,9 +27,14 @@ local function require_fields(fields, redirect_url)
 	return true
 end
 
+local function safe_vm_name(name)
+	if not name then return "" end
+	return name:gsub("[^%w_%-%.]", "")
+end
+
 local function create_disk_bg(format, path, size)
 	if size and size ~= "" and format and path then
-		os.execute(string.format("%s create_disk_bg %s '%s' %s", QEMU_ACTIONS, format, path, size))
+		os.execute(string.format("%s create_disk_bg %s '%s' %s", QEMU_ACTIONS, format, path:gsub("'", "'\\''"), size))
 	end
 end
 
@@ -323,6 +328,10 @@ local function create_storage_device(device_type)
 	local uci = get_uci()
 	local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
 
+	if not nixio.fs.access(storage_path) then
+		nixio.fs.mkdir(storage_path)
+	end
+
 	local vm_name       = luci.http.formvalue("vm")
 	local device_id     = luci.http.formvalue("id")
 	local file_path     = luci.http.formvalue("file")
@@ -426,6 +435,14 @@ local function create_vm_from_wizard()
 	local vm_cdrom_image    = luci.http.formvalue("cdrom_image")
 	local vm_disk_path      = luci.http.formvalue("disk_path")
 	local vm_video_type     = luci.http.formvalue("video_type") or "std"
+
+	local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
+	if not nixio.fs.access(storage_path) then
+		nixio.fs.mkdir(storage_path)
+	end
+	if not vm_disk_path:match("^/") then
+		vm_disk_path = storage_path .. "/" .. vm_disk_path
+	end
 
 	local vm_section = uci:add("qemu", "vm")
 	uci:set("qemu", vm_section, "name", vm_name)
@@ -546,7 +563,8 @@ function vm_state()
 
 	local storage_path = uci:get("qemu", "@global[0]", "storage_path") or "/storage/qemu"
 	local state_file = storage_path .. "/" .. vm_name .. ".state.gz"
-	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. vm_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
+	local safe_name = safe_vm_name(vm_name)
+	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. safe_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
 	local running = pid ~= ""
 	local frozen = uci:get("qemu", section, "frozen") == "1"
 	local freezing = uci:get("qemu", section, "freezing") == "1"
@@ -622,7 +640,8 @@ function clone_vm()
 		new_name = old_name .. "-clone"
 	end
 
-	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. old_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
+	local safe_old = safe_vm_name(old_name)
+	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. safe_old .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
 	if pid ~= "" then
 		luci.http.write_json({success = false, message = "Cannot clone a running VM. Please stop it first."})
 		return
@@ -703,7 +722,8 @@ function freeze_vm()
 
 	qemu_log("freeze_vm: freezing " .. vm_name)
 
-	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. vm_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
+	local safe_name = safe_vm_name(vm_name)
+	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. safe_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
 	if pid == "" then
 		luci.http.write_json({success = false, message = "VM is not running"})
 		return
@@ -720,14 +740,15 @@ function freeze_vm()
 	uci:set("qemu", section, "freezing", "1")
 	uci:commit("qemu")
 
+	local safe_sec = safe_vm_name(section)
 	local cmd = string.format(
 		"( %s freeze_vm '%s' '%s' && " ..
 		"uci set qemu.%s.frozen=1 && uci delete qemu.%s.freezing && uci commit qemu && " ..
 		"rm -f /var/run/qemu-freeze-%s.pid ) || " ..
 		"( uci delete qemu.%s.freezing && uci commit qemu && rm -f /var/run/qemu-freeze-%s.pid )",
-		QEMU_ACTIONS, vm_name, state_file, section, section, section, section, section
+		QEMU_ACTIONS, vm_name, state_file, safe_sec, safe_sec, safe_sec, safe_sec, safe_sec
 	)
-	os.execute(string.format("( %s ) & echo $! > /var/run/qemu-freeze-%s.pid", cmd, section))
+	os.execute(string.format("( %s ) & echo $! > /var/run/qemu-freeze-%s.pid", cmd, safe_sec))
 
 	luci.http.write_json({success = true, freezing = true})
 end
@@ -763,7 +784,8 @@ function rename_vm()
 		return
 	end
 
-	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. old_name .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
+	local safe_old = safe_vm_name(old_name)
+	local pid = luci.sys.exec("ps | grep -E 'qemu-system.*[[:space:]]-name[[:space:]]+\"?" .. safe_old .. "\"?[[:space:]]' | grep -v grep | awk '{print $1}'"):trim()
 	if pid ~= "" then
 		luci.http.write_json({success = false, message = "Cannot rename a running VM. Please stop it first."})
 		return

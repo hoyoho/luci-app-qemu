@@ -36,8 +36,17 @@ get_global_config() {
 	storage_path=$(uci_get_by_type "global" "storage_path" "/storage/qemu")
 }
 
+__qemu_uci_cache=""
+_qemu_show() {
+	if [ -n "$__qemu_uci_cache" ]; then
+		echo "$__qemu_uci_cache"
+	else
+		uci show qemu 2>/dev/null
+	fi
+}
+
 get_all_vm_refs() {
-	uci show qemu | grep -E "@vm\[.*=vm" | awk -F. '{print $2}' | awk -F= '{print $1}'
+	_qemu_show | grep -E "@vm\[.*=vm" | awk -F. '{print $2}' | awk -F= '{print $1}'
 }
 
 validate_uefi_config() {
@@ -184,7 +193,7 @@ validate_storage_config() {
 	local used_ids=""
 
 	# 校验存储配置
-	local devices=$(uci show qemu | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local devices=$(_qemu_show | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for device_ref in $devices; do
 		local device_file=$(uci_get_by_name "$device_ref" "file")
 		local device_id=$(uci_get_by_name "$device_ref" "id")
@@ -244,7 +253,7 @@ build_storage_config() {
 	local cmd=""
 	
 	# 解析所有存储设备配置（disk、cdrom）
-	local devices=$(uci show qemu | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local devices=$(_qemu_show | grep -E "@(disk|cdrom)\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for device_ref in $devices; do
 		local device_file=$(uci_get_by_name "$device_ref" "file")
 		local device_id=$(uci_get_by_name "$device_ref" "id")
@@ -282,7 +291,7 @@ build_storage_config() {
 		done
 	
 	# 解析 storage 配置（兼容旧配置）
-	local storages=$(uci show qemu | grep -E "@storage\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local storages=$(_qemu_show | grep -E "@storage\[" | grep -E "vm='$name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for storage_ref in $storages; do
 		local type=$(uci_get_by_name "$storage_ref" "type" "")
 		local path=$(uci_get_by_name "$storage_ref" "path" "")
@@ -300,7 +309,7 @@ validate_controller_config() {
 	local vm_ref=$1
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	
-	local controllers=$(uci show qemu | grep -E "@controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local controllers=$(_qemu_show | grep -E "@controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for controller_ref in $controllers; do
 		local type=$(uci_get_by_name "$controller_ref" "type" "")
 		if [ -z "$type" ]; then
@@ -319,7 +328,7 @@ build_controller_config() {
 	local cmd=""
 	local controller_index=0
 	
-	local controllers=$(uci show qemu | grep -E "controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local controllers=$(_qemu_show | grep -E "controller_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for controller_ref in $controllers; do
 		local type=$(uci_get_by_name "$controller_ref" "type" "")
 		if [ -n "$type" ]; then
@@ -334,7 +343,7 @@ build_controller_config() {
 
 validate_host_dev_usb() {
 	local vm_name=$1
-	local usb_hosts=$(uci show qemu | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local usb_hosts=$(_qemu_show | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $usb_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -z "$host" ]; then
@@ -347,7 +356,7 @@ validate_host_dev_usb() {
 
 validate_host_dev_pci() {
 	local vm_name=$1
-	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local pci_hosts=$(_qemu_show | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	if [ -n "$pci_hosts" ]; then
 		for host_ref in $pci_hosts; do
 			local host=$(uci_get_by_name "$host_ref" "host" "")
@@ -385,7 +394,7 @@ validate_host_dev_pci() {
 
 validate_host_dev_mdev() {
 	local vm_name=$1
-	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local mdev_hosts=$(_qemu_show | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $mdev_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -z "$host" ]; then
@@ -398,7 +407,7 @@ validate_host_dev_mdev() {
 
 validate_host_dev_tpm() {
 	local vm_name=$1
-	local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local tpm_hosts=$(_qemu_show | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $tpm_hosts; do
 		local device_path=$(uci_get_by_name "$host_ref" "device_path" "")
 		if [ -z "$device_path" ]; then
@@ -431,7 +440,7 @@ build_host_dev_usb() {
 	local vm_name=$1
 	local cmd=""
 	local usb_index=0
-	local usb_hosts=$(uci show qemu | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local usb_hosts=$(_qemu_show | grep -E "host_dev_usb" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $usb_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -n "$host" ]; then
@@ -448,7 +457,7 @@ build_host_dev_pci() {
 	local vm_name=$1
 	local cmd=""
 	local pci_index=0
-	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local pci_hosts=$(_qemu_show | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $pci_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -n "$host" ]; then
@@ -464,7 +473,7 @@ build_host_dev_mdev() {
 	local vm_name=$1
 	local cmd=""
 	local mdev_index=0
-	local mdev_hosts=$(uci show qemu | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local mdev_hosts=$(_qemu_show | grep -E "host_dev_mdev" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $mdev_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		local mdev_type=$(uci_get_by_name "$host_ref" "mdev_type" "")
@@ -480,7 +489,7 @@ build_host_dev_rng() {
 	local vm_name=$1
 	local cmd=""
 	local rng_index=0
-	local rng_hosts=$(uci show qemu | grep -E "host_dev_rng" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local rng_hosts=$(_qemu_show | grep -E "host_dev_rng" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $rng_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "/dev/urandom")
 		if [ -n "$host" ]; then
@@ -495,7 +504,7 @@ build_host_dev_tpm() {
 	local vm_name=$1
 	local cmd=""
 	local tpm_index=0
-	local tpm_hosts=$(uci show qemu | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local tpm_hosts=$(_qemu_show | grep -E "host_dev_tpm" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $tpm_hosts; do
 		local model=$(uci_get_by_name "$host_ref" "model" "crb")
 		local device_path=$(uci_get_by_name "$host_ref" "device_path" "")
@@ -529,7 +538,7 @@ build_interface_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local interfaces=$(uci show qemu | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local interfaces=$(_qemu_show | grep -E "@interface_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 
 	local has_console=0
 	for interface_ref in $interfaces; do
@@ -596,7 +605,7 @@ build_watchdog_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local watchdogs=$(uci show qemu | grep -E "@watchdog\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local watchdogs=$(_qemu_show | grep -E "@watchdog\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for watchdog_ref in $watchdogs; do
 		local device=$(uci_get_by_name "$watchdog_ref" "device" "i6300esb")
 		cmd="$cmd -device $device"
@@ -611,7 +620,7 @@ build_sound_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local sounds=$(uci show qemu | grep -E "@sound\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local sounds=$(_qemu_show | grep -E "@sound\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	if [ -n "$sounds" ]; then
 		local sound_index=0
 		for sound_ref in $sounds; do
@@ -746,7 +755,7 @@ build_network_config() {
 
 	qemu_log "build_network_config: vm_ref=$vm_ref vm_name=$vm_name"
 
-	local nets=$(uci show qemu | grep -E "qemu\.@net_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local nets=$(_qemu_show | grep -E "qemu\.@net_" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	qemu_log "build_network_config: found nets=$nets"
 
 	for net_section in $nets; do
@@ -793,14 +802,12 @@ build_display_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local displays=$(uci show qemu | grep -E "@display\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local displays=$(_qemu_show | grep -E "@display\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for display_ref in $displays; do
 		local display_type=$(uci_get_by_name "$display_ref" "type" "none")
 		local display_address=$(uci_get_by_name "$display_ref" "address" "0.0.0.0")
 		local display_port=$(uci_get_by_name "$display_ref" "port" "5900")
 		local display_port_manual=$(uci_get_by_name "$display_ref" "port_manual" "0")
-		local display_password=$(uci_get_by_name "$display_ref" "password" "")
-		local display_password_enabled=$(uci_get_by_name "$display_ref" "password_enabled" "0")
 		local display_address_enabled=$(uci_get_by_name "$display_ref" "address_enabled" "1")
 				
 		if [ "$display_type" = "none" ]; then
@@ -818,9 +825,6 @@ build_display_config() {
 			else
 				display_param="${display_param}0,to=20"
 			fi
-			if [ "$display_password_enabled" = "1" ] && [ -n "$display_password" ]; then
-				display_param="$display_param,password"
-			fi
 			cmd="$cmd $display_param"
 		fi
 	done
@@ -834,7 +838,7 @@ build_video_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local videos=$(uci show qemu | grep -E "@video\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local videos=$(_qemu_show | grep -E "@video\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for video_ref in $videos; do
 		local video_type=$(uci_get_by_name "$video_ref" "type" "std")
 		
@@ -863,7 +867,7 @@ build_input_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local inputs=$(uci show qemu | grep -E "@input\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local inputs=$(_qemu_show | grep -E "@input\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for input_ref in $inputs; do
 		local input_type=$(uci_get_by_name "$input_ref" "type")
 		if [ -n "$input_type" ]; then
@@ -880,7 +884,7 @@ build_extra_config() {
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local cmd=""
 	
-	local extras=$(uci show qemu | grep -E "@extra\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local extras=$(_qemu_show | grep -E "@extra\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for extra_ref in $extras; do
 		local extra_args=$(uci_get_by_name "$extra_ref" "args" "")
 		# 过滤危险字符，防止命令注入
@@ -947,44 +951,12 @@ prepare_qemu_command() {
 	return 0
 }
 
-set_vnc_password_for_vm() {
-	local vm_name=$1
-	local vm_ref=$2
-
-	local displays=$(uci show qemu | grep -E "@display\[" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
-	for display_ref in $displays; do
-		local password_enabled=$(uci_get_by_name "$display_ref" "password_enabled" "0")
-		if [ "$password_enabled" != "1" ]; then
-			continue
-		fi
-
-		local encoded_password=$(uci_get_by_name "$display_ref" "password" "")
-		if [ -z "$encoded_password" ]; then
-			continue
-		fi
-
-		local plain_password
-		case "$encoded_password" in
-			B64:*)
-				plain_password=$(echo "${encoded_password#B64:}" | base64 -d 2>/dev/null)
-				;;
-			*)
-				plain_password="$encoded_password"
-				;;
-		esac
-		if [ -z "$plain_password" ]; then
-			qemu_log "Warning: Failed to decode VNC password for VM $vm_name"
-			continue
-		fi
-
-		set_vnc_password "$vm_name" "$plain_password"
-	done
-}
-
 start_vm() {
 	local vm_ref=$1
 	local incoming="$2"
 	qemu_log "Starting VM reference: $vm_ref incoming=$incoming"
+
+	[ -z "$__qemu_uci_cache" ] && __qemu_uci_cache=$(_qemu_show 2>/dev/null)
 
 	local name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
 	local pid=$(find_vm_pid "$name")
@@ -1006,6 +978,21 @@ start_vm() {
 		return 1
 	fi
 
+	# 原子锁防止并发启动
+	local lock_dir="/tmp/qemu_start_lock_${name}"
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		qemu_log "VM $name is already being started (lock held), skipping"
+		return 0
+	fi
+
+	# 再次检查进程（防止获取锁前已被启动）
+	pid=$(find_vm_pid "$name")
+	if [ -n "$pid" ]; then
+		qemu_log "VM $name is already running (PID: $pid), skipping start"
+		rmdir "$lock_dir" 2>/dev/null
+		return 0
+	fi
+
 	if [ -z "$incoming" ]; then
 		local state_file="$storage_path/${name}.state.gz"
 		if [ -f "$state_file" ]; then
@@ -1018,6 +1005,7 @@ start_vm() {
 
 	if ! prepare_qemu_command "$vm_ref"; then
 		qemu_log "Error: Failed to Start VM $name"
+		rmdir "$lock_dir" 2>/dev/null
 		return 1
 	fi
 
@@ -1033,12 +1021,12 @@ start_vm() {
 
 	local pidfile="/var/run/qemu-${name}.pid"
 	qemu_log "Opening procd instance for VM $name"
-	procd_open_instance "${name}"
+	procd_open_instance "${vm_ref}"
 
 	qemu_log "Setting procd parameters for VM $name"
-	procd_set_param command $qemu_cmd
+	procd_set_param command /bin/sh -c "$qemu_cmd 2>>$LOGFILE"
 	procd_set_param stdout 0
-	procd_set_param stderr 1
+	procd_set_param stderr 0
 	procd_set_param user root
 	procd_set_param pidfile "$pidfile"
 	procd_set_param term_timeout 60
@@ -1046,7 +1034,7 @@ start_vm() {
 	qemu_log "Closing procd instance for VM $name"
 	procd_close_instance
 
-	set_vnc_password_for_vm "$name" "$vm_ref"
+	rmdir "$lock_dir" 2>/dev/null
 
 	if [ -n "$incoming" ]; then
 		qemu_log "Resuming VM $name from state file: $incoming (background)"
@@ -1108,7 +1096,7 @@ stop_vm() {
 	cleanup_runtime_files "$name"
 
 	local vm_name=$(uci_get_by_name "$vm_ref" "name" "$vm_ref")
-	local pci_hosts=$(uci show qemu | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
+	local pci_hosts=$(_qemu_show | grep -E "host_dev_pci" | grep -E "vm='$vm_name'" | awk -F. '{print $2}' | awk -F= '{print $1}')
 	for host_ref in $pci_hosts; do
 		local host=$(uci_get_by_name "$host_ref" "host" "")
 		if [ -n "$host" ]; then
@@ -1122,6 +1110,8 @@ stop_vm() {
 start_all_autostart_vm() {
 	qemu_log "Starting all VMs configured for autostart"
 	
+	[ -z "$__qemu_uci_cache" ] && __qemu_uci_cache=$(_qemu_show 2>/dev/null)
+
 	local vm_names=$(get_all_vm_refs)
 	if [ -z "$vm_names" ]; then
 		qemu_log "No VMs found in configuration"

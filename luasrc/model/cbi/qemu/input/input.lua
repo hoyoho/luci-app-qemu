@@ -3,12 +3,7 @@ local m, s, o
 m = Map("qemu", translate("QEMU Input Management"))
 m.pageaction = true
 
--- 获取所有虚拟机名称
-local vm_list = {}
-local uci = require("luci.model.uci").cursor()
-uci:foreach("qemu", "vm", function(s)
-    table.insert(vm_list, {name = s.name or s['.name'], title = s.name or s['.name']})
-end)
+local vm_list = require("luci.model.cbi.qemu.util").get_vm_list()
 
 -- 输入设备列表部分
 s = m:section(TypedSection, "input", translate("Input Devices"))

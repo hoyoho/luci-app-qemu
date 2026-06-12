@@ -7,7 +7,7 @@ qemu_log() {
 }
 
 # ============================================================================
-# Disk Operations
+# 磁盘操作
 # ============================================================================
 
 create_disk_image() {
@@ -34,7 +34,7 @@ disk_file_exists() {
 }
 
 # ============================================================================
-# File Operations
+# 文件操作
 # ============================================================================
 
 delete_files() {
@@ -47,7 +47,7 @@ delete_files() {
 }
 
 # ============================================================================
-# UEFI Firmware Operations
+# UEFI 固件操作
 # ============================================================================
 
 setup_uefi_firmware() {
@@ -88,7 +88,7 @@ setup_uefi_firmware() {
 }
 
 # ============================================================================
-# PCI Passthrough Operations
+# PCI 直通操作
 # ============================================================================
 
 pci_bind() {
@@ -127,7 +127,7 @@ pci_unbind() {
 }
 
 # ============================================================================
-# Runtime Cleanup
+# 运行时清理
 # ============================================================================
 
 cleanup_runtime_files() {
@@ -147,34 +147,8 @@ cleanup_runtime_files() {
 }
 
 # ============================================================================
-# VNC Password via QMP
+# VNC 密码（通过 QMP）
 # ============================================================================
-
-set_vnc_password() {
-	local vm_name="$1"
-	local password="$2"
-	local qmp_socket="/var/run/qemu-${vm_name}-qmp.sock"
-
-	local waited=0
-	while [ $waited -lt 50 ]; do
-		if [ -S "$qmp_socket" ]; then
-			break
-		fi
-		sleep 0.1
-		waited=$((waited + 1))
-	done
-
-	if [ ! -S "$qmp_socket" ]; then
-		qemu_log "Warning: QMP socket not ready for VM $vm_name, cannot set VNC password"
-		return 1
-	fi
-
-	socat - unix-connect:$qmp_socket >/dev/null 2>&1 <<QMPEOF
-{"execute":"qmp_capabilities"}
-{"execute":"change","arguments":{"device":"vnc","target":"password","arg":"$password"}}
-QMPEOF
-	qemu_log "VNC password set for VM $vm_name"
-}
 
 qmp_shutdown_vm() {
 	local vm_name="$1"
@@ -193,7 +167,7 @@ QMPEOF
 }
 
 # ============================================================================
-# VM Status
+# VM 状态
 # ============================================================================
 
 find_vm_pid() {
@@ -208,7 +182,7 @@ is_vm_running() {
 }
 
 # ============================================================================
-# Freeze / Resume
+# 冻结 / 恢复
 # ============================================================================
 
 freeze_vm() {
@@ -394,7 +368,7 @@ QMPEOF
 }
 
 # ============================================================================
-# Disk Copy
+# 磁盘复制
 # ============================================================================
 
 copy_disk() {
@@ -408,11 +382,11 @@ copy_disk_bg() {
 	local src="$1"
 	local dst="$2"
 	qemu_log "Copying disk: $src -> $dst"
-	cp "$src" "$dst" >/dev/null 2>&1
+	cp "$src" "$dst" >/dev/null 2>&1 &
 }
 
 # ============================================================================
-# Storage Directory
+# 存储目录
 # ============================================================================
 
 ensure_storage_dir() {
@@ -428,7 +402,7 @@ ensure_storage_dir() {
 }
 
 # ============================================================================
-# VM Clone
+# 虚拟机克隆
 # ============================================================================
 
 _vm_name_exists() {
@@ -550,7 +524,7 @@ clone_vm() {
 		return 2
 	fi
 
-	# Atomic lock to prevent concurrent clones
+	# 原子锁防止并发克隆
 	if ! mkdir "/tmp/qemu_clone_lock_${old_name}" 2>/dev/null; then
 		qemu_log "clone_vm: clone already in progress for $old_name"
 		return 4
@@ -666,7 +640,7 @@ PAIRS
 }
 
 # ============================================================================
-# CLI Interface (for external calls from Lua controller)
+# CLI 接口（供 Lua 控制器调用）
 # ============================================================================
 if [ "$1" != "" ]; then
 	case "$1" in
@@ -696,9 +670,6 @@ if [ "$1" != "" ]; then
 			;;
 		cleanup_runtime)
 			cleanup_runtime_files "$2"
-			;;
-		set_vnc_password)
-			set_vnc_password "$2" "$3"
 			;;
 		qmp_shutdown)
 			qmp_shutdown_vm "$2"
